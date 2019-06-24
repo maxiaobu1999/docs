@@ -189,3 +189,11 @@ _
   | _LearnShare_ |  12 | [LearnShare](http://xianbai.me) |
   | __Mike__     |  32 | [Mike](http://mike.me)          |
   ```
+
+### 3.2 锚点
+
+- 任意 1-6 个 **#** 标注的标题都会被添加上同名的锚点链接
+- 无论目标几个#，都只用一个#
+- [参考资料](https://my.oschina.net/antsky/blog/1475173)
+
+[锚点](#3.1 表格)
