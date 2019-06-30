@@ -1,12 +1,32 @@
 # docker
 
+
+
 ##1 Docker简介
 
 go语言实现，
 
 ##2 Docker 安装
 
+### 3.1镜像相关命令
+
+删除镜像
+
+```
+docker rmi 【镜像ID】
+```
+
+
+
 ### 3.2 容器相关命令
+
+#### 3.2.0 查看镜像
+
+```
+docker images
+```
+
+
 
 #### 3.2.1 查看容器
 
@@ -234,14 +254,63 @@ docker pull redis
 docker run -di --name=myredis -p 6379:6379 redis
 ```
 
-###4.5Nexus
+###4.5 [Nexus](https://hub.docker.com/r/sonatype/nexus3/)
 
 ```
 docker search nexus
 docker pull sonatype/nexus3
-docker run -d -p 8081:8081 --name mynexus sonatype/nexus3
+docker run -d -p 8081:8081 --name mynexus -v /Users/maxiaobu/Documents/nexus_data:/nexus-data sonatype/nexus3
 docker logs -f mynexus
 ```
+
+http://localhost:8081/
+
+默认用户名密码：admin/admin123
+
+停止与启动容器
+
+```
+docker stop  mynexus
+```
+
+删除容器
+
+```
+docker ps -a
+docker rm 98b7382a8f4d
+```
+
+容器保存为镜像
+
+```
+docker commit mynexus baidunexus
+```
+
+输出镜像文件
+
+```
+docker save -o mynginx.tar baidunexus
+```
+
+删除老的镜像
+
+```
+docker rmi baidunexus
+```
+
+从tar中恢复镜像
+
+```
+docker load -i mynginx.tar
+```
+
+启动容器
+
+```
+docker run -d -p 8081:8081 --name mynexus -v /Users/maxiaobu/Documents/nexus_data:/nexus-data baidunexus
+```
+
+
 
 
 
@@ -387,7 +456,7 @@ vi /etc/docker/daemon.json
 systemctl restart docker 
 ```
 
-## 7.2 镜像上传至私有仓库
+### 7.2 镜像上传至私有仓库
 
 (1)标记此镜像为私有仓库的镜像
 
@@ -401,6 +470,46 @@ docker tag jdk1.8 192.168.184.141:5000/jdk1.8
 docker push 192.168.184.141:5000/jdk1.8
 ```
 
+##8 容器数据持久化
 
+docker 为我们提供了三种不同的方式将数据挂载到容器中：**volume、bind mount、`tmpfs`**。
 
+docker 镜像是以 layer 概念存在的，一层一层的叠加，最终成为我们需要的镜像。但该镜像的每一层都是 `ReadOnly` 只读的。只有在我们运行容器的时候才会创建读写层。文件系统的隔离使得：
+
+- 容器不再运行时，数据将不会持续存在，数据很难从容器中取出。
+- 无法在不同主机之间很好的进行数据迁移。
+- 数据写入容器的读写层需要内核提供联合文件系统，这会额外的降低性能。
+
+### 8.1 volume 方式
+
+volume 方式是 docker 中数据持久化的最佳方式。
+
+- docker 默认在主机上会有一个特定的区域（`/var/lib/docker/volumes/` Linux），该区域用来存放 volume。
+- 非 docker 进程不应该去修改该区域。
+- volume 可以通过 `docker volume` 进行管理，如创建、删除等操作。
+- volume 在生成的时候如果不指定名称，便会随机生成。
+
+(1)创建一个卷
+
+```
+docker volume create nexus_data
+```
+
+(2)查看卷列表
+
+```
+ docker volume ls
+```
+
+(3)查看卷信息
+
+```
+docker volume inspect  nexus_data
+```
+
+(4)删除卷
+
+```
+ docker volume rm  nexus_data
+```
 

@@ -2,7 +2,7 @@
 
 ## 1、 编辑器
 
-Typora todo 下载链接
+[Typora](https://typora.io/) 
 
 ## 2、语法
 
