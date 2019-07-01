@@ -1,7 +1,5 @@
 # Android 系统核心服务
 
-
-
 ![Android重要系统服务汇总图](../sources/Android重要系统服务汇总图.png)
 
 ## 1、 Java系统服务-综述
@@ -232,7 +230,21 @@ https://www.jianshu.com/p/ef058fcfcd30
 
 ### 4.1 概述
 
-为所有窗口Surface，记录管理Surface的显示顺序(Z-order)及位置尺寸，控制窗口动画，todo？输入系统的中转站。
+WMS主要的功能如下
+
+1. 窗口的添加和删除
+
+2. 窗口的显示和隐藏控制
+
+3. Z-order顺序管理
+
+4. 焦点窗口和焦点应用的管理
+
+5. 输入法窗口管理和墙纸窗口管理
+
+6. 窗口动画管理
+
+7. 系统消息收集和分发
 
 ![WMS和SurfaceFlinger的关系图](../sources/WMS和SurfaceFlinger的关系图.png)
 
