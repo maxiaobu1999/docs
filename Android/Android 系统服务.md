@@ -133,7 +133,17 @@
 
 ![AMS与ActivityManager的通信实现图](../sources/AMS与ActivityManager的通信实现图.png)
 
+### 3.5 相关类
 
+![ActivityManagerService相关类图](../sources/ActivityManagerService相关类图.png)
+
+- todohttp://gityuan.com/2017/06/11/activity_record/
+- 1)\tActivityManagerService，它是管理activity的入口类，聚合了ProcessRecord对象和ActivityStack对象
+- 2)\tProcessRecord，表示应用进程记录，每个应用进程都有对应的ProcessRecord对象
+- 3)\tActivityStack，该类主要管理回退栈，保存一种类型所有的TaskRecord列表
+- 4)\tActivityRecord，每次启动一个Actvity会有一个对应的ActivityRecord对象，表示Activity的一个记录
+- 5)\tActivityInfo，Activity的信息，比如启动模式，taskAffinity，flag信息(这些信息在AndroidManifest.xml里声明Activity时填写)
+- 6)\tTaskRecord，Task记录信息，一个Task可能有多个ActivityRecord，但是一个ActivityRecord只能属于一个TaskRecord
 
 ##3 PackageManagerServie
 
@@ -274,3 +284,6 @@ WMS主要的功能如下
 ![wms启动流程图](../sources/wms启动流程图.jpg)
 
 整个启动过程涉及3个线程: system_server主线程, “android.display”, “android.ui”, 整个过程是采用阻塞方式(利用Handler.runWithScissors)执行的. 其中WindowManagerService.mH的Looper运行在 “android.display”进程，也就意味着WMS.H.handleMessage()在该线程执行。 
+
+##todo 启动 Activity 过程源码分析 [https://glumes.com/post/android/android-start-activity-from-launcher-2/#activitymanagerservice-%E7%B1%BB%E7%9A%84-startactivityasuser-%E6%96%B9%E6%B3%95](https://glumes.com/post/android/android-start-activity-from-launcher-2/#activitymanagerservice-类的-startactivityasuser-方法)
+

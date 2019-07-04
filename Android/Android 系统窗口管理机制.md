@@ -60,7 +60,7 @@ WindowManager实际执行者，进程单例，维护进程所有window中view信
 
 ### activity中的window和view
 
-![activity中的window和view](../sources/activity中的window和view.png)
+![activity中的window和view](../sources/activity中的window和view.jpeg)
 
 
 
