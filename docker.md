@@ -8,6 +8,17 @@ go语言实现，
 
 ### 2.1 docker 安装
 
+```
+#安装 Docker
+yum -y install docker
+#启动 Docker 后台服务
+service docker start
+#查看Docker版本
+docker version
+#设置开机自启动
+service docker enable      或    sudo systemctl enable docker
+```
+
 
 
 ### 3.1镜像相关命令
