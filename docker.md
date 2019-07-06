@@ -308,6 +308,8 @@ docker load -i mynginx.tar
 docker run -d -p 8081:8081 --name mynexus -v /Users/maxiaobu/Documents/nexus_data:/nexus-data baidunexus
 ```
 
+## 4.6 shadowsocks
+
 
 
 ###4.6 shadowsocks
