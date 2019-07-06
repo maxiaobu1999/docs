@@ -1,0 +1,62 @@
+.DS_Store
+*.iml
+.gradle
+/local.properties
+#除非有必要，否则不要添加.idea目录下的文件到代码仓库中
+/.idea
+.DS_Store
+/build
+/captures
+
+#start buildSrc
+/buildSrc/build
+
+#end buildSrc
+
+
+# start 为切换分支避免误提交添加以下修改
+/lib-common/lib-fresco/imagepipeline-backends/imagepipeline-okhttp3/build
+# end 为切换分支避免误提交添加以下修改
+
+# lib-common
+/lib-common/lib-config/build
+/lib-common/lib-util/build
+/lib-common/lib-res/build
+/lib-common/lib-runtime/build
+/lib-common/lib-reactnative/rn-ability/build
+/lib-common/lib-notification-res/build
+
+# lib-http
+/lib-common/lib-http/build
+
+# lib-abtest
+/lib-common/lib-abtest-source/build
+/lib-common/lib-abtest/build
+
+# sub-project
+/subprojects/lib-feed/build
+# start fastdebug
+fas.bat
+fastdebug_as.py
+# end fastdebug
+
+/lib-tools/blockcanary/build
+/lib-tools/blockcanary-empty/build
+
+# start freeline
+/freeline
+/freeline_project_description.json
+/freeline.py
+# end freeline
+
+/res-night
+
+
+# start lockscreen lib
+subprojects/lib-lockscreen/lib-lockscreen-dependence
+# enf lockscreen lib
+
+# start mavenLocal dir
+/.m2
+/repo
+# end mavenLocal dir
