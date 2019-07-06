@@ -1,7 +1,5 @@
 # docker
 
-
-
 ##1 Docker简介
 
 go语言实现，
@@ -312,7 +310,7 @@ docker run -d -p 8081:8081 --name mynexus -v /Users/maxiaobu/Documents/nexus_dat
 
 
 
-
+###4.6 shadowsocks
 
 ## 5迁移与备份
 
