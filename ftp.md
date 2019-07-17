@@ -20,6 +20,8 @@ vsftpd.userlist中明确列出的用户才能被允许登录
 
 ## 1.3、连接
 
+软件地址：[FileZilla](https://www.filezilla.cn/download/client)
+
 协议：FTP-文件传输协议
 
 ip：54.183.236.104
@@ -29,4 +31,12 @@ ip：54.183.236.104
 用户名：root
 
 密码：服务器密码123
+
+
+
+#####1.4 问题
+
+- 无法读取套接字: ECONNRESET - 连接被对方复位
+
+检查filezilla的传输模式设置为主动
 
