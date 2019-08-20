@@ -309,7 +309,7 @@ AMS调用ApplicationThreadProxy的scheduleLaunchActivity，回应用进程去启
 AMS通过应用进程的Binder代理ApplicationThreadProxy，最终会调用ApplicationThread的bindApplication方法
 
 ```java
-//ActivityThread类
+//ApplicationThread
 public final void bindApplication(String processName,
         ApplicationInfo appInfo, List<ProviderInfo> providers,
         ComponentName instrumentationName, String profileFile,
