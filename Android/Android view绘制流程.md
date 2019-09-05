@@ -30,9 +30,9 @@ requestLayout()
 
 Involite()
 
-画图四要素：canvas paint bitmap
+画图四要素：canvas paint bitmap 画图元素
 
-dispatchDraw onDraw :viewGroup没有背景只调用dispatchDraw()
+ dispatchDraw onDraw :viewGroup没有背景只调用dispatchDraw()
 
 ##SurfaceFlinger & Surface
 
@@ -66,11 +66,17 @@ gc：
 
 内存泄露
 
-> 静态 内部类 context 
+> handle：内部类持有外部类引用，
 >
-> handle thread
+> 静态 内部类 context thread
 >
-> 像素信息存放位置recycle()
+>  其他：webview dialog
+>
+> stream cursor 多媒体 传感器 系统服务 广播 contentObserver 集合
+>
+> 像素信息存放位置recycle()：2.3-》3.0>5.0>8.0
+>
+>  多activity
 
 内存抖动：对象池（Message#obtain()，listview）
 
@@ -84,9 +90,9 @@ gc：
 
 复用
 
-> inBitmap 线程池  byte[]数组池
+> inBitmap 线程池  byte[]数组池 对象池
 >
-> 
+> LRUCache DiskLRUCache listView
 
 释放：内存泄露
 
@@ -253,3 +259,51 @@ menifest 资源id so
 
 enum：一个增加1～1.5kb
 
+# 加密
+
+对称加密（DES、AES）
+
+非对称加密：RSA
+
+# http
+
+状态码
+
+# 项目搭建
+
+# 相机 
+
+对焦
+
+# 兼容问题
+
+4.0-5.0
+
+
+
+# 设计模式
+
+*单例*：
+
+*工厂*：创建型，用于具有继承关系的对象创建，隐藏产品创建逻辑，提供抽象接口
+
+产品等级：对象的继承结构。丰田汽车、本田汽车----汽车
+
+简单工厂：抽象产品、具体产品，工厂。静态方法，基于参数决定产品
+
+工厂方法：抽象产品、具体产品，抽象工厂、具体工厂。根据工厂类型决定产品
+
+产品族：由同一个工厂生产，隶属于不同产品等级的一组产品
+
+抽象工厂：抽象产品、具体产品，抽象工厂、具体工厂、（超级工厂用于创建工厂）。解决产品族
+
+
+
+# launcher
+
+它俗称“HomeScreen”也就是我们开机后看到的第一个App。launcher其实就是一个app，它的作用用来显示和管理手机上其他App。
+
+```
+<category android:name="android.intent.category.HOME"/>
+<category android:name="android.intent.category.DEFAULT"/>
+```
