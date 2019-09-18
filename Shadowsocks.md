@@ -1,5 +1,10 @@
 # Shadowsocks
 
+su root  #输入a2243116 切换root登录
+mkdir malong #创建malong文件夹
+sudo passwd root     #修改root密码
+chmod 777 -R /var/ftp/xxx    #修改权限
+
 ##1、SSR服务器
 
 ```
@@ -29,9 +34,9 @@ wget -N --no-check-certificate https://raw.githubusercontent.com/ToyoDAdoubi/dou
 
 
 
- I  P	    : 54.183.236.104
+I  P	    : 52.199.159.43
 
- 端口	    : 2334
+ 端口	    : 2333
 
  密码	    : 123456
 
@@ -41,24 +46,16 @@ wget -N --no-check-certificate https://raw.githubusercontent.com/ToyoDAdoubi/dou
 
  混淆	    : plain
 
- 设备数限制 : 99
+ 设备数限制 : 0(无限)
 
  单线程限速 : 0 KB/S
 
  端口总限速 : 0 KB/S
 
- SS    链接 : ss://YWVzLTEyOC1jdHI6MTIzNDU2QDU0LjE4My4yMzYuMTA0OjIzMzQ 
+ SS    链接 : ss://YWVzLTEyOC1jdHI6MTIzNDU2QDUyLjE5OS4xNTkuNDM6MjMzMw 
 
- SS  二维码 : http://doub.pw/qr/qr.php?text=ss://YWVzLTEyOC1jdHI6MTIzNDU2QDU0LjE4My4yMzYuMTA0OjIzMzQ
+ SS  二维码 : http://doub.pw/qr/qr.php?text=ss://YWVzLTEyOC1jdHI6MTIzNDU2QDUyLjE5OS4xNTkuNDM6MjMzMw
 
- SSR   链接 : ssr://NTQuMTgzLjIzNi4xMDQ6MjMzNDphdXRoX3NoYTFfdjQ6YWVzLTEyOC1jdHI6cGxhaW46TVRJek5EVTI 
+ SSR   链接 : ssr://NTIuMTk5LjE1OS40MzoyMzMzOmF1dGhfc2hhMV92NDphZXMtMTI4LWN0cjpwbGFpbjpNVEl6TkRVMg 
 
- SSR 二维码 : http://doub.pw/qr/qr.php?text=ssr://NTQuMTgzLjIzNi4xMDQ6MjMzNDphdXRoX3NoYTFfdjQ6YWVzLTEyOC1jdHI6cGxhaW46TVRJek5EVTI 
-
- 
-
-  提示: 
-
- 在浏览器中，打开二维码链接，就可以看到二维码图片。
-
- 协议和混淆后面的[ _compatible ]，指的是 兼容原版协议/混淆。
+ SSR 二维码 : http://doub.pw/qr/qr.php?text=ssr://NTIuMTk5LjE1OS40MzoyMzMzOmF1dGhfc2hhMV92NDphZXMtMTI4LWN0cjpwbGFpbjpNVEl6TkRVMg 
