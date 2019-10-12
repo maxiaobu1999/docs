@@ -86,17 +86,37 @@ gc：
 
 >  编码（565 8888）、采样（inSampleSize）
 >
-> 
+>  Xml&代码&点9替换png
+>
+>  不可见回收：glide fragment
+>
+>  优化集合类：SparseArray ArrayMap 
 
 复用
 
-> inBitmap 线程池  byte[]数组池 对象池
+> inBitmap intentService 线程池   byte[]数组池 对象池
+>
+> 3级缓存：内存lru 弱引用 磁盘多尺寸
 >
 > LRUCache DiskLRUCache listView
 
 释放：内存泄露
 
-扩容：多进程、largeheap配置、匿名共享内存
+> Context:尽量使用ApplicationContext
+>
+> Handler：内部类&匿名内部类持有外部类引用，销毁时机，view.post(),thread
+>
+> 静态：单例，静态属性
+>
+> 资源释放：io 多媒体 系统服务 硬件传感器
+>
+> 反注册：观察者、广播、缓存
+>
+> 其他：WebView、dialog、recyclerView全局缓存池
+>
+> 
+
+扩容：多进程、largeheap配置、匿名共享内存、兜底杀进程
 
 # mvp
 
@@ -184,11 +204,29 @@ InputDispatcher
 
 hashmap 数据+链表/红黑树 扩容因子 复制
 
-linkedHashMap
+ArrayList:
+
+实现：数组。增加：扩容1.5倍复制。 删除：后边向前复制。插入：不支持。
+
+快：查找、修改。慢：删除、插入
+
+LinkedList：双向链表，节点node，前置节点、前驱、后继
+
+查找慢
+
+HashMap
 
 concurrentHashMap 分段锁
 
+1、实现方式：数组、链表
 
+2、线程安全
+
+synchronousQueue
+
+linkedBlockingQueue
+
+arrayBlockingQueue
 
 # handler
 
@@ -269,6 +307,24 @@ enum：一个增加1～1.5kb
 
 状态码
 
+Https:
+
+1、获取公钥：从服务器获取证书（含公钥），使用发布机构证书校验真伪
+
+2、获取密钥：生成随机密钥，用公钥加密密钥，发给服务器
+
+3、加密传输：使用密钥对称加密，传输内容
+
+证书：验证公钥
+
+非对称加密：RSA，公钥加密、私钥解密。用于验证身份，加密密钥
+
+对称加密：AES，DES，用密钥加密解密。用于加密数据
+
+
+
+
+
 # 项目搭建
 
 # 相机 
@@ -322,6 +378,52 @@ enum：一个增加1～1.5kb
 
 
 
-##数据结构
 
-数组
+
+# 列表相关
+
+优化
+
+ViewHolder：findViewById深度遍历view树，耗时。此操作放在静态ViewHolder中执行，直接从中获取view引用
+
+createViewHolder();BindViewHolder();
+
+
+
+# cpu优化
+
+反射20+ms TAG
+
+耗时操作子线程，线程池 ，优先队列，延时执行（onresume不行，view.post()或dispatchDraw（））
+
+binder：启动service
+
+# 耗电
+
+满足业务之外的
+
+动画、GIF、视频，不显示时未关闭
+
+GPS各种传感器不使用时未关闭
+
+Wakelock未释放
+频繁唤醒：Push长连接心跳 后台定时任务、轮询
+
+# retrofit
+
+声明接口方法描述网络请求，jdk的api实现动态代理，adapter factory数据转换
+
+
+
+# okhttp
+
+使用socket建立tcp链接，根据http协议发送和解析字节流
+
+socket连接池：底层使用socket建立流链接、长短链
+
+责任链和拦截器：自定义Log拦截器，重定向、缓存
+
+线程池和消息队列：SynchronousQueue
+
+缓存：
+
