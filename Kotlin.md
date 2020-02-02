@@ -6,11 +6,11 @@
 
 ## 类型
 
-### var
+### var 普通变量
 
-### val
+### val 只能赋值一次
 
-### constant
+### constant 编译时赋值
 
 ## null相关
 

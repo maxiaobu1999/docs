@@ -427,3 +427,10 @@ socket连接池：底层使用socket建立流链接、长短链
 
 缓存：
 
+# js交互
+
+map《key,callback（）》
+
+责任链 通过path获取拦截器
+
+App://version/module/submodule/.../action?k1=v1&k2=v2&...
