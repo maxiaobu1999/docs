@@ -1,4 +1,6 @@
-# Android 事件分发
+# Android 的控件系统
+
+
 
 > dispatchTouchEvent（）、 onInterceptTouchEvent() 、onTouchEvnt()
 >
