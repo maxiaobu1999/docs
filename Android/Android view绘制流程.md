@@ -48,7 +48,7 @@ Surface mSurface :画布，SurfaceFling使用
 - 准备阶段：搜集信息、执行view.post(runnable)
 - 协商测量：窗口的尺寸需要根据mView改变(dialog)，由ViewRootImpl.measureHierarchy()实现。
 
-![performTraversals工作流程](/Users/v_maqinglong/Documents/IdeaProjects/docs/sources/view绘制/performTraversals工作流程.png)
+![performTraversals工作流程](../sources/view绘制/performTraversals工作流程.png)
 
 ```java
 // api 29
@@ -811,7 +811,7 @@ private void performTraversals() {
 
 目的：判断控件树的尺寸==窗口尺寸，不一致则返回true，表示窗口需要重新布局
 
-![与绘制](/Users/v_maqinglong/Documents/IdeaProjects/docs/sources/view绘制/预测量.png)
+![与绘制](../sources/view绘制/预测量.png)
 
 1、第一次window使用默认尺寸，
 
@@ -885,7 +885,7 @@ private boolean measureHierarchy(final View host, final WindowManager.LayoutPara
 
 ## 测量流程
 
-![测量流程](/Users/v_maqinglong/Documents/IdeaProjects/docs/sources/view绘制/测量流程.png)
+![测量流程](../sources/view绘制/测量流程.png)
 
 ```java
 public final void measure(int widthMeasureSpec, int heightMeasureSpec) {
@@ -964,18 +964,16 @@ public final void measure(int widthMeasureSpec, int heightMeasureSpec) {
 
 MeasureSpec表示的是一个32位的整形值，它的高2位表示测量模式SpecMode，低30位表示父控件的建议尺寸。
 
-```
+```java
  final int specMode = MeasureSpec.getMode(measureSpec);
-        final int specSize = MeasureSpec.getSize(measureSpec);
+ final int specSize = MeasureSpec.getSize(measureSpec);
 ```
 
 25～30位放标识，eg：View.MEASURED_STATE_TOO_SMALL = 0x01000000，第25位=1
 
 高8位是状态位：getMeasuredState()获取的就是状态位，其中高16位是宽度的，低16位是高度，即高度的SPEC_MODE被>>16位
 
-(todo：修改下图)
-
-![MeasureSpec的结构](/Users/v_maqinglong/Documents/IdeaProjects/docs/sources/view绘制/MeasureSpec的结构.png)
+![MeasureSpec的结构](../sources/view绘制/MeasureSpec的结构.png)
 
 > - EXACTLY：view必须为SPEC_SIZE指定的尺寸
 > - AT_MOST：view可以是任意尺寸，但不可以大于SPEC_SIZE。eg：WRAP_CONTENT
@@ -993,7 +991,7 @@ MeasureSpec表示的是一个32位的整形值，它的高2位表示测量模式
 
 ### FrameLayout测量分析
 
-![FrameLayout测量流程](/Users/v_maqinglong/Documents/IdeaProjects/docs/sources/view绘制/FrameLayout测量流程.png)
+![FrameLayout测量流程](../sources/view绘制/FrameLayout测量流程.png)
 
 ```java
 // 宽|高为MATCH_PARENT的子控件的集合
@@ -1172,7 +1170,7 @@ public static int resolveSizeAndState(int size, int measureSpec, int childMeasur
 
 View通过mLeft、mTop、mRight、mBottom成员变量保存坐标值
 
-![layout左上右下](/Users/v_maqinglong/Documents/IdeaProjects/docs/sources/view绘制/layout左上右下.jpg)
+![layout左上右下](../sources/view绘制/layout左上右下.jpg)
 
 ```java
 public void layout(int l, int t, int r, int b) {
@@ -1255,7 +1253,7 @@ public void layout(int l, int t, int r, int b) {
 
 ## 绘制流程
 
-![绘制流程](/Users/v_maqinglong/Documents/IdeaProjects/docs/sources/view绘制/绘制流程.png)
+![绘制流程](../sources/view绘制/绘制流程.png)
 
 todo：硬件绘制sdk29版本分析
 
@@ -1999,7 +1997,7 @@ protected void dispatchDraw(Canvas canvas) {
 
 ### 硬件绘制
 
-![硬件绘制](/Users/v_maqinglong/Documents/IdeaProjects/docs/sources/view绘制/硬件绘制.png)
+![硬件绘制](../sources/view绘制/硬件绘制.png)
 
 **图形库**：openGL ES 2.0
 

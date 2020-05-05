@@ -5,6 +5,8 @@
 ``` 
 brew install nexus
 ```
+## 免安装
+
 tar zxvf /Users/norman/mine/nexus-3.18.1-01-mac.tgz 
 cd /Users/norman/mine/nexus/nexus-3.18.1-01/bin 
 ./nexus start
@@ -14,3 +16,13 @@ cd /Users/norman/mine/nexus/nexus-3.18.1-01/bin
 安装路径为：/usr/local/Cellar/nexus/2.14.10-01
 
 备份路径： /usr/local/var/nexus/storage 
+
+## 修改端口号
+
+/Users/norman/mine/nexus/nexus-3.18.1-01/etc/nexus-default.properties 
+
+## 迁移
+
+地址：http://localhost:8090/
+
+复制：/Users/norman/mine/nexus

@@ -22,7 +22,7 @@ vsftpd.userlist中明确列出的用户才能被允许登录
 
 软件地址：[FileZilla](https://www.filezilla.cn/download/client)
 
-协议：FTP-文件传输协议
+协议：FTP-文件传输协议 || SFTP -SSH使用密钥登陆
 
 ip：54.183.236.104
 
@@ -39,4 +39,13 @@ ip：54.183.236.104
 - 无法读取套接字: ECONNRESET - 连接被对方复位
 
 检查filezilla的传输模式设置为主动
+
+- fileZilla 意外退出解决办法配置签名
+
+  ```shell
+   codesign --force --deep --sign - /Users/norman/Downloads/FileZilla.app 
+  
+  ```
+
+  
 

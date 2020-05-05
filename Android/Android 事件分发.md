@@ -1,5 +1,748 @@
 # Android 事件分发
 
+## 总流程（简）
+
+![事件分发简ViewRoot](/Users/norman/Documents/idea/docs/sources/事件分发/事件分发简ViewRoot.png)
+
+
+
+## 总流程
+
+
+
+
+
+
+
+
+
+![事件分发ViewRoot](../sources/事件分发/事件分发ViewRoot.png)
+
+
+
+```java
+// ViewRootImpl
+// 连接InputDispatcher
+final class WindowInputEventReceiver extends InputEventReceiver {
+    public WindowInputEventReceiver(InputChannel inputChannel, Looper looper) {
+        super(inputChannel, looper);
+    }
+		// 输入事件到来时调用
+    @Override
+    public void onInputEvent(InputEvent event) {
+        Trace.traceBegin(Trace.TRACE_TAG_VIEW, "processInputEventForCompatibility");
+        List<InputEvent> processedEvents;
+        try {
+          	// 检查特殊事件，eg：触控笔的按键。如是会将event加入processedEvents
+            processedEvents =
+                mInputCompatProcessor.processInputEventForCompatibility(event);
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_VIEW);
+        }
+        if (processedEvents != null) {
+          	// 特殊事件的处理
+            if (processedEvents.isEmpty()) {
+                finishInputEvent(event, true);
+            } else {
+                for (int i = 0; i < processedEvents.size(); i++) {
+                    enqueueInputEvent(
+                            processedEvents.get(i), this,
+                            QueuedInputEvent.FLAG_MODIFIED_FOR_COMPATIBILITY, true);
+                }
+            }
+        } else {
+          	// 处理普通输入事件的
+            enqueueInputEvent(event, this, 0, true);
+        }
+    }
+
+    /**
+     * 通知InputDispatcher事件处理完成，回收事件
+     * 此方法在InputEventReceiver中.
+     */
+    public final void finishInputEvent(InputEvent event, boolean handled) {
+        if (event == null) {
+            throw new IllegalArgumentException("event must not be null");
+        }
+        if (mReceiverPtr == 0) {
+            Log.w(TAG, "Attempted to finish an input event but the input event "
+                    + "receiver has already been disposed.");
+        } else {
+            int index = mSeqMap.indexOfKey(event.getSequenceNumber());
+            if (index < 0) {
+                Log.w(TAG, "Attempted to finish an input event that is not in progress.");
+            } else {
+                int seq = mSeqMap.valueAt(index);
+                mSeqMap.removeAt(index);
+              	// 通知InputDispatcher事件处理完成
+                nativeFinishInputEvent(mReceiverPtr, seq, handled);
+            }
+        }
+      	// 回收事件
+        event.recycleIfNeededAfterDispatch();
+    }
+}
+```
+
+
+
+```java
+// 待处理链表头部的event.
+QueuedInputEvent mPendingInputEventHead;
+// 待处理链表尾部的event.
+QueuedInputEvent mPendingInputEventTail;
+/** ViewRootImpl
+	* @params event 接受到的新事件
+	* @params receiver 处理事件的接收器，即WindowInputEventReceiver
+	* @params processImmediately  正常事件一般true，当前线程、立即处理事件。
+	*/
+void enqueueInputEvent(InputEvent event,
+        InputEventReceiver receiver, int flags, boolean processImmediately) {
+ 		// 把event加入mQueuedInputEventPool链表中保存
+  	// QueuedInputEvent：由InputEvent封装而来，ViewRoot中事件的存在形式
+    QueuedInputEvent q = obtainQueuedInputEvent(event, receiver, flags);
+
+    // 待处理链表尾部的event.
+    QueuedInputEvent last = mPendingInputEventTail;
+    if (last == null) {
+        mPendingInputEventHead = q;
+        mPendingInputEventTail = q;
+    } else {
+        last.mNext = q;
+        mPendingInputEventTail = q;
+    }
+    mPendingInputEventCount += 1;
+    Trace.traceCounter(Trace.TRACE_TAG_INPUT, mPendingInputEventQueueLengthCounterName,
+            mPendingInputEventCount);
+
+    if (processImmediately) {
+      	// 正常事件，立即处理
+        doProcessInputEvents();
+    } else {
+      	// 特殊事件需要转换成另外一个事件，再入队列。eg：轨迹球
+        scheduleProcessInputEvents();
+    }
+}
+```
+
+
+
+```java
+// 把event加入mQueuedInputEventPool链表中保存，添加到链表尾部。
+// @params receiver：ViewRoot的WindowInputEventReceiver，event处理完后需要使用 
+private QueuedInputEvent obtainQueuedInputEvent(InputEvent event,
+        InputEventReceiver receiver, int flags) {
+  	// 链表，保存全部待处理事件event
+    QueuedInputEvent q = mQueuedInputEventPool;
+  	// 这个event加入链表
+    if (q != null) {
+        mQueuedInputEventPoolSize -= 1;
+        mQueuedInputEventPool = q.mNext;
+        q.mNext = null;
+    } else {
+        q = new QueuedInputEvent();
+    }
+    q.mEvent = event;
+    q.mReceiver = receiver;//event处理完后需要使用
+    q.mFlags = flags;
+    return q;
+}
+```
+
+
+
+```java
+void doProcessInputEvents() {
+    // 遍历待处理队列，从链表头部逐一处理
+    while (mPendingInputEventHead != null) {
+      	// mPendingInputEventHead：保存待处理event的链表，头部的事件
+        QueuedInputEvent q = mPendingInputEventHead;
+        mPendingInputEventHead = q.mNext;
+        if (mPendingInputEventHead == null) {
+            mPendingInputEventTail = null;
+        }
+        q.mNext = null;
+
+        mPendingInputEventCount -= 1;
+        Trace.traceCounter(Trace.TRACE_TAG_INPUT, mPendingInputEventQueueLengthCounterName,
+                mPendingInputEventCount);
+
+        long eventTime = q.mEvent.getEventTimeNano();
+        long oldestEventTime = eventTime;
+        if (q.mEvent instanceof MotionEvent) {
+            MotionEvent me = (MotionEvent)q.mEvent;
+            if (me.getHistorySize() > 0) {
+                oldestEventTime = me.getHistoricalEventTimeNano(0);
+            }
+        }
+        mChoreographer.mFrameInfo.updateInputEventTime(eventTime, oldestEventTime);
+				// 处理事件
+        deliverInputEvent(q);
+    }
+
+    // We are done processing all input events that we can process right now
+    // so we can clear the pending flag immediately.
+    if (mProcessInputEventsScheduled) {
+        mProcessInputEventsScheduled = false;
+        mHandler.removeMessages(MSG_PROCESS_INPUT_EVENTS);
+    }
+}
+```
+
+
+
+```java
+
+private void deliverInputEvent(QueuedInputEvent q) {
+    Trace.asyncTraceBegin(Trace.TRACE_TAG_VIEW, "deliverInputEvent",
+            q.mEvent.getSequenceNumber());
+    if (mInputEventConsistencyVerifier != null) {
+      	// tip事件不是在这里传递给根控件的
+        mInputEventConsistencyVerifier.onInputEvent(q.mEvent, 0);
+    }
+
+  	//// 事件传递给mInputEventConsistencyVerifier
+    InputStage stage;
+    if (q.shouldSendToSynthesizer()) {
+        stage = mSyntheticInputStage;
+    } else {
+        stage = q.shouldSkipIme() ? mFirstPostImeInputStage : mFirstInputStage;
+    }
+
+    if (q.mEvent instanceof KeyEvent) {
+        mUnhandledKeyManager.preDispatch((KeyEvent) q.mEvent);
+    }
+
+    if (stage != null) {
+        handleWindowFocusChanged();
+      	// 采用InputStage责任链传递事件，触控事件的拦截器是ViewPostImeInputStage
+        stage.deliver(q);
+    } else {
+        finishInputEvent(q);
+    }
+}
+```
+
+
+
+```java
+// 各类事件的终点，
+// 通过InputEventReceiver，向InputDisptacher发送处理完毕事件
+private void finishInputEvent(QueuedInputEvent q) {
+    Trace.asyncTraceEnd(Trace.TRACE_TAG_VIEW, "deliverInputEvent",
+            q.mEvent.getSequenceNumber());
+
+    if (q.mReceiver != null) {
+      	// 来自于InputDispatcher的事件，需要向InputDispatcher反馈，由其回收
+        boolean handled = (q.mFlags & QueuedInputEvent.FLAG_FINISHED_HANDLED) != 0;
+        boolean modified = (q.mFlags & QueuedInputEvent.FLAG_MODIFIED_FOR_COMPATIBILITY) != 0;
+        if (modified) {
+            Trace.traceBegin(Trace.TRACE_TAG_VIEW, "processInputEventBeforeFinish");
+            InputEvent processedEvent;
+            try {
+                processedEvent =
+                        mInputCompatProcessor.processInputEventBeforeFinish(q.mEvent);
+            } finally {
+                Trace.traceEnd(Trace.TRACE_TAG_VIEW);
+            }
+            if (processedEvent != null) {
+              	// 通过InputEventReceiver反馈
+                q.mReceiver.finishInputEvent(processedEvent, handled);
+            }
+        } else {
+          	//// 通过InputEventReceiver反馈
+            q.mReceiver.finishInputEvent(q.mEvent, handled);
+        }
+    } else {
+      	// 此事件由ViewRoot自行创建，回收但不去要反馈
+        q.mEvent.recycleIfNeededAfterDispatch();
+    }
+
+    recycleQueuedInputEvent(q);
+}
+```
+
+
+
+
+
+**ViewRoot**.InputStage
+
+```java
+/**
+ * Delivers an event to be processed.
+ */
+public final void deliver(QueuedInputEvent q) {
+    if ((q.mFlags & QueuedInputEvent.FLAG_FINISHED) != 0) {
+        forward(q);
+    } else if (shouldDropInputEvent(q)) {
+        finish(q, false);
+    } else {
+      	// onProcess()由拦截器重载，返回事件处理的结果
+        apply(q, onProcess(q));
+    }
+}
+```
+
+
+
+```java
+/**
+ * Applies a result code from {@link #onProcess} to the specified event.
+ */
+protected void apply(QueuedInputEvent q, int result) {
+    if (result == FORWARD) {
+        forward(q);
+    } else if (result == FINISH_HANDLED) {
+        finish(q, true);
+    } else if (result == FINISH_NOT_HANDLED) {
+        finish(q, false);
+    } else {
+        throw new IllegalArgumentException("Invalid result: " + result);
+    }
+}
+```
+
+
+
+**ViewPostImeInputStage**
+
+```java
+@Override
+protected int onProcess(QueuedInputEvent q) {
+    if (q.mEvent instanceof KeyEvent) {
+      	// 处理按键事件
+        return processKeyEvent(q);
+    } else {
+        final int source = q.mEvent.getSource();
+        if ((source & InputDevice.SOURCE_CLASS_POINTER) != 0) {
+          	// 处理触控事件
+            return processPointerEvent(q);
+        } else if ((source & InputDevice.SOURCE_CLASS_TRACKBALL) != 0) {
+          	// 处理滚动球事件
+            return processTrackballEvent(q);
+        } else {
+          	// 处理其他事件。eg：悬浮（HOVER）、手柄等
+            return processGenericMotionEvent(q);
+        }
+    }
+}
+```
+
+
+
+```java
+private int processPointerEvent(QueuedInputEvent q) {
+    final MotionEvent event = (MotionEvent)q.mEvent;
+
+    mAttachInfo.mUnbufferedDispatchRequested = false;
+    mAttachInfo.mHandlingPointerEvent = true;
+  	// 事件传递到了空间树
+    boolean handled = mView.dispatchPointerEvent(event);
+    maybeUpdatePointerIcon(event);
+    maybeUpdateTooltip(event);
+    mAttachInfo.mHandlingPointerEvent = false;
+    if (mAttachInfo.mUnbufferedDispatchRequested && !mUnbufferedInputDispatch) {
+        mUnbufferedInputDispatch = true;
+        if (mConsumeBatchedInputScheduled) {
+            scheduleConsumeBatchedInputImmediately();
+        }
+    }
+    return handled ? FINISH_HANDLED : FORWARD;
+}
+```
+
+
+
+## 控件树流程
+
+![事件分发空间树](../sources/事件分发/事件分发空间树.png)
+
+
+
+```java
+// 派发目标的集合（链表）。多点触控，所以可能有多个派发目标，用触控点ID区分。
+// 第一根手指的触摸事件在链表头
+private TouchTarget mFirstTouchTarget;
+
+@Override
+public boolean dispatchTouchEvent(MotionEvent ev) {
+    if (mInputEventConsistencyVerifier != null) {
+        mInputEventConsistencyVerifier.onTouchEvent(ev, 1);
+    }
+
+    if (ev.isTargetAccessibilityFocus() && isAccessibilityFocusedViewOrHost()) {
+      	// 推测屏幕辅助相关。false清除标识，正常派发（）
+        ev.setTargetAccessibilityFocus(false);
+    }
+		// 事件处理结果，最后的返回值
+    boolean handled = false;
+    if (onFilterTouchEventForSecurity(ev)) {
+      	// 检查表识，一般事件都会进来
+        final int action = ev.getAction();
+      	// 事件类型。 ACTION_MASK：8个1
+        final int actionMasked = action & MotionEvent.ACTION_MASK;
+
+        // ACTION_DOWN事件处理钱准备.
+        if (actionMasked == MotionEvent.ACTION_DOWN) {
+            // 清除派发目标等.
+            cancelAndClearTouchTargets(ev);
+            resetTouchState();
+        }
+
+        // 检查拦截.
+        final boolean intercepted;
+        if (actionMasked == MotionEvent.ACTION_DOWN|| mFirstTouchTarget != null) {
+            final boolean disallowIntercept = (mGroupFlags & FLAG_DISALLOW_INTERCEPT) != 0;
+            if (!disallowIntercept) {
+              	// 触发拦截回调
+                intercepted = onInterceptTouchEvent(ev);
+                ev.setAction(action); // restore action in case it was changed
+            } else {
+                intercepted = false;
+            }
+        } else {
+            intercepted = true;
+        }
+      	// 拦截&非首次action_down.eg：第二根手指落下。
+        if (intercepted || mFirstTouchTarget != null) {
+          	// // 推测屏幕辅助相关。false清除标识，正常派发
+            ev.setTargetAccessibilityFocus(false);
+        }
+
+        // 检查取消.
+        final boolean canceled = resetCancelNextUpFlag(this)
+                || actionMasked == MotionEvent.ACTION_CANCEL;
+
+        // 多点触控可能需要拆分.
+        final boolean split = (mGroupFlags & FLAG_SPLIT_MOTION_EVENTS) != 0;
+        TouchTarget newTouchTarget = null;
+      	// 确定派发目标时会传递一次事件，派发事件阶段就不需要再派发了，用这个做标识
+        boolean alreadyDispatchedToNewTouchTarget = false;
+      	// 不拦截&&不取消
+        if (!canceled && !intercepted) {
+            // 带焦点的子控件
+            View childWithAccessibilityFocus = ev.isTargetAccessibilityFocus()
+                    ? findChildWithAccessibilityFocus() : null;
+          	// 1、确定派发目标。
+            if (actionMasked == MotionEvent.ACTION_DOWN
+                    || (split && actionMasked == MotionEvent.ACTION_POINTER_DOWN)
+                    || actionMasked == MotionEvent.ACTION_HOVER_MOVE) {
+              	// 触控点ID：多点触控，区分触控点，用于追踪特定的触控点。
+              	// 一个int保存，对1左移若干位，2的ID次幂
+                final int actionIndex = ev.getActionIndex(); // 第几根手指
+              	// 拆分事件？这个触控点的ID：-1
+                final int idBitsToAssign = split ? 1 << ev.getPointerId(actionIndex)
+                        : TouchTarget.ALL_POINTER_IDS;
+                // 清除之前的派发目标.
+                removePointersFromTouchTargets(idBitsToAssign);
+								// 从子控件中选取派发目标
+                final int childrenCount = mChildrenCount;
+                if (newTouchTarget == null && childrenCount != 0) {
+                  	// 没有子控件则不需要此此操作
+                    final float x = ev.getX(actionIndex);// event的x轴坐标
+                    final float y = ev.getY(actionIndex);// event的Y轴坐标
+                    // 对子控件根据Z轴进行排序，确定派发顺序.
+                    final ArrayList<View> preorderedList = buildTouchDispatchChildList();
+                    final boolean customOrder = preorderedList == null
+                            && isChildrenDrawingOrderEnabled();
+                    final View[] children = mChildren;
+                    for (int i = childrenCount - 1; i >= 0; i--) {
+                        final int childIndex = getAndVerifyPreorderedIndex(
+                                childrenCount, i, customOrder);
+                        final View child = getAndVerifyPreorderedView(
+                                preorderedList, children, childIndex);
+                        // 有焦点的控件优先接收事件.
+                        if (childWithAccessibilityFocus != null) {
+                            if (childWithAccessibilityFocus != child) {
+                              	// 这view不是有焦点的view，跳过
+                                continue;
+                            }
+                            childWithAccessibilityFocus = null;
+                            i = childrenCount - 1;
+                        }
+												// 根据坐标判断这个view是不是派发目标
+                        if (!child.canReceivePointerEvents()
+                                || !isTransformedTouchPointInView(x, y, child, null)) {
+                            ev.setTargetAccessibilityFocus(false);
+                          	// 不是派发目标，跳过。
+                            continue;
+                        }
+												// 这个child控件是派发目标
+                      	// 检查这个控件在不在已有的派发目标中
+                        newTouchTarget = getTouchTarget(child);
+                        if (newTouchTarget != null) {
+                            // 这个控件已经是派发目标。eg：两个手指先后落在同一控件
+                            newTouchTarget.pointerIdBits |= idBitsToAssign;
+                            break;
+                        }
+												// 清除这个child控件的PFLAG_CANCEL_NEXT_UP_EVENT标识
+                        resetCancelNextUpFlag(child);
+                      	// 把event传递给这个子控件，会执行child.dispatchTouchEvent
+                        if (dispatchTransformedTouchEvent(ev, false, child, idBitsToAssign)) {
+                            // 这个子控件愿意处理此event.即onTouch()返回true
+                            mLastTouchDownTime = ev.getDownTime();
+                          	// 保存子控件的角标。
+                            if (preorderedList != null) {
+                                for (int j = 0; j < childrenCount; j++) {
+                                    if (children[childIndex] == mChildren[j]) {
+                                        mLastTouchDownIndex = j;
+                                        break;
+                                    }
+                                }
+                            } else {
+                                mLastTouchDownIndex = childIndex;
+                            }
+                          	// 保存事件坐标
+                            mLastTouchDownX = ev.getX();
+                            mLastTouchDownY = ev.getY();
+                          	// 保存派发目标
+                            newTouchTarget = addTouchTarget(child, idBitsToAssign);
+                          	// 记录已经派发过事件，派发事件阶段看见true，不会重复派发
+                            alreadyDispatchedToNewTouchTarget = true;
+                          	// 找到派发目标了跳出循环
+                            break;
+                        }
+
+                        // 推测屏幕辅助相关.
+                        ev.setTargetAccessibilityFocus(false);
+                    }
+                    if (preorderedList != null) preorderedList.clear();
+                }
+								// 子控件都不愿意处理此event.
+                if (newTouchTarget == null && mFirstTouchTarget != null) {
+                    // 这个事件交给第一个根手指的派发目标.
+                    newTouchTarget = mFirstTouchTarget;
+                    while (newTouchTarget.next != null) {
+                        newTouchTarget = newTouchTarget.next;
+                    }
+                    newTouchTarget.pointerIdBits |= idBitsToAssign;
+                }
+            }
+        }
+
+        // 传递事件给派发目标.
+        if (mFirstTouchTarget == null) {
+          	// 没有派发目标.由本控件处理事件
+            // 子控件传null，则会调用本控件的super.dispatchTouchEvent(event);
+          	// 即本控件的父类View的dispatchTouchEvent()
+            handled = dispatchTransformedTouchEvent(ev, canceled, null,
+                    TouchTarget.ALL_POINTER_IDS);
+        } else {
+            // 子控件处理事件.
+            TouchTarget predecessor = null;
+            TouchTarget target = mFirstTouchTarget;
+            while (target != null) {
+                final TouchTarget next = target.next;
+                if (alreadyDispatchedToNewTouchTarget && target == newTouchTarget) {
+                  	// 确定派发目标时，已经传递过事件了
+                    handled = true;
+                } else {
+                    final boolean cancelChild = resetCancelNextUpFlag(target.child)
+                            || intercepted;
+                  	// 把传递事件给派发目标
+                    if (dispatchTransformedTouchEvent(ev, cancelChild,
+                            target.child, target.pointerIdBits)) {
+                        handled = true;
+                    }
+                    if (cancelChild) {
+                        if (predecessor == null) {
+                            mFirstTouchTarget = next;
+                        } else {
+                            predecessor.next = next;
+                        }
+                        target.recycle();
+                        target = next;
+                        continue;
+                    }
+                }
+                predecessor = target;
+                target = next;
+            }
+        }
+
+        // 如果事件类型是cancel|action_up等，清空派发目标.
+        if (canceled
+                || actionMasked == MotionEvent.ACTION_UP
+                || actionMasked == MotionEvent.ACTION_HOVER_MOVE) {
+            resetTouchState();
+        } else if (split && actionMasked == MotionEvent.ACTION_POINTER_UP) {
+            final int actionIndex = ev.getActionIndex();
+            final int idBitsToRemove = 1 << ev.getPointerId(actionIndex);
+            removePointersFromTouchTargets(idBitsToRemove);
+        }
+    }
+
+    if (!handled && mInputEventConsistencyVerifier != null) {
+        mInputEventConsistencyVerifier.onUnhandledEvent(ev, 1);
+    }
+    return handled;
+}
+```
+
+
+
+
+
+
+
+```java
+/**
+	* 将触控事件转换为特定子视图的坐标空间，过滤掉无关的指针ID，并在必要时覆盖其动作。 
+	* 如果child为null，则假定将MotionEvent发送到此ViewGroup。
+	* @Params event 触控事件
+	* @Params cancel 是否取消事件
+	* @Params child 目标控件
+	* @Params desiredPointerIdBits 事件当前的触控点ID
+	*
+	*/
+private boolean dispatchTransformedTouchEvent(MotionEvent event, boolean cancel,
+        View child, int desiredPointerIdBits) {
+    final boolean handled;
+
+    // 处理取消事件
+    final int oldAction = event.getAction();
+    if (cancel || oldAction == MotionEvent.ACTION_CANCEL) {
+        event.setAction(MotionEvent.ACTION_CANCEL);
+        if (child == null) {
+            handled = super.dispatchTouchEvent(event);
+        } else {
+            handled = child.dispatchTouchEvent(event);
+        }
+        event.setAction(oldAction);
+        return handled;
+    }
+
+    final int oldPointerIdBits = event.getPointerIdBits();// 取出所有的触控点
+  	// 全部触控点ID&事件本次的触控点ID，区分事件拆分
+    final int newPointerIdBits = oldPointerIdBits & desiredPointerIdBits;
+
+    // 不正常情况.
+    if (newPointerIdBits == 0) {
+        return false;
+    }
+
+    // 不需要拆分事件.
+    final MotionEvent transformedEvent;
+    if (newPointerIdBits == oldPointerIdBits) {
+        if (child == null || child.hasIdentityMatrix()) {
+            if (child == null) {
+              	// 1、没有子控件，由本ViewGroup自己处理
+                handled = super.dispatchTouchEvent(event);
+            } else {
+                final float offsetX = mScrollX - child.mLeft;
+                final float offsetY = mScrollY - child.mTop;
+                event.offsetLocation(offsetX, offsetY);
+								// 2、事件传递给子控件
+                handled = child.dispatchTouchEvent(event);
+                event.offsetLocation(-offsetX, -offsetY);
+            }
+            return handled;
+        }
+      	// 创建新事件
+        transformedEvent = MotionEvent.obtain(event);
+    } else {
+      	// 拆分事件
+        transformedEvent = event.split(newPointerIdBits);
+    }
+
+    // 处理拆分事件.
+    if (child == null) {
+      	// 自己处理
+        handled = super.dispatchTouchEvent(transformedEvent);
+    } else {
+        final float offsetX = mScrollX - child.mLeft;
+        final float offsetY = mScrollY - child.mTop;
+        transformedEvent.offsetLocation(offsetX, offsetY);
+        if (! child.hasIdentityMatrix()) {
+            transformedEvent.transform(child.getInverseMatrix());
+        }
+				// 子控件处理
+        handled = child.dispatchTouchEvent(transformedEvent);
+    }
+
+    // Done.
+    transformedEvent.recycle();
+    return handled;
+}
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```java
+public boolean dispatchTouchEvent(MotionEvent event) {
+    // 辅助功能相关.
+    if (event.isTargetAccessibilityFocus()) {
+        if (!isAccessibilityFocusedViewOrHost()) {
+            return false;
+        }
+        event.setTargetAccessibilityFocus(false);
+    }
+
+    boolean result = false;
+
+    if (mInputEventConsistencyVerifier != null) {
+        mInputEventConsistencyVerifier.onTouchEvent(event, 0);
+    }
+
+    final int actionMasked = event.getActionMasked();
+    if (actionMasked == MotionEvent.ACTION_DOWN) {
+        // 停止滚动，防御性检查
+        stopNestedScroll();
+    }
+
+    if (onFilterTouchEventForSecurity(event)) {
+        if ((mViewFlags & ENABLED_MASK) == ENABLED && handleScrollBarDragging(event)) {
+            result = true;
+        }
+        // 1、检查OnTouchListener，并处理回调
+        ListenerInfo li = mListenerInfo;
+        if (li != null && li.mOnTouchListener != null
+                && (mViewFlags & ENABLED_MASK) == ENABLED
+                && li.mOnTouchListener.onTouch(this, event)) {
+            result = true;
+        }
+				// 2、调用onTouchEvent()，若OnTouchListener返回true，则不调用
+        if (!result && onTouchEvent(event)) {
+            result = true;
+        }
+    }
+
+    if (!result && mInputEventConsistencyVerifier != null) {
+        mInputEventConsistencyVerifier.onUnhandledEvent(event, 0);
+    }
+
+    // 如果是up事件（系列触摸动作的终点），或者是cancel事件，或者是DOWN事件并且没对它进行处理，就停止滚动状态.
+    if (actionMasked == MotionEvent.ACTION_UP ||
+            actionMasked == MotionEvent.ACTION_CANCEL ||
+            (actionMasked == MotionEvent.ACTION_DOWN && !result)) {
+        stopNestedScroll();
+    }
+
+    return result;
+}
+```
+
+
+
+
+
 > dispatchTouchEvent（）、 onInterceptTouchEvent() 、onTouchEvnt()
 >
 > 事件循序一个完成发下一个，InputDispatcher window DecorView Activity
