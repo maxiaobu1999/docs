@@ -14,6 +14,574 @@ Window提供了一个canvas，绘制区域为整个窗口
 
 开发者复写View.onDraw()，使用转换后的canvas绘制界面
 
+## 绘制入口
+
+相关源码：[performTraversals() ](#performTraversals())
+
+绘制流程的核心函数，onMeasure()、onLayout()、onDraw()都是在其执行过程中触发
+
+- 准备阶段：搜集信息、执行view.post(runnable)
+
+- 协商测量：窗口的尺寸需要根据mView改变(dialog)，由[measureHierarchy()](#measureHierarchy())实现。
+
+  
+
+![performTraversals工作流程](../sources/view绘制/performTraversals工作流程.png)
+
+## 预测量
+
+相关源码：[measureHierarchy()](#measureHierarchy())
+
+原因：窗口的尺寸需要根据mView改变(悬浮窗口dialog)
+
+目的：判断控件树的尺寸==窗口尺寸，不一致则返回true，表示窗口需要重新布局
+
+![与绘制](../sources/view绘制/预测量.png)
+
+1、第一次window使用默认尺寸(系统配置文件有个默认值)
+
+2、第二次：(系统默认宽度+宽口最大可用宽度)/2
+
+3、第三次使用宽口最大可用宽度
+
+## 测量流程
+
+相关源码：[measure()](#measure())
+
+![测量流程](../sources/view绘制/测量流程.png)
+
+三个流程类似，其余两个不画了。
+
+### MeasureSpec
+
+MeasureSpec表示的是一个32位的整形值，它的高2位表示测量模式SpecMode，低30位表示父控件的建议尺寸。
+
+```java
+ final int specMode = MeasureSpec.getMode(measureSpec);
+ final int specSize = MeasureSpec.getSize(measureSpec);
+```
+
+25～30位放标识，eg：View.MEASURED_STATE_TOO_SMALL = 0x01000000，第25位=1
+
+高8位是状态位：getMeasuredState()获取的就是状态位，其中高16位是宽度的，低16位是高度，即高度的状态位被>>16位
+
+![MeasureSpec的结构](../sources/view绘制/MeasureSpec的结构.png)
+
+> - EXACTLY：view必须为SPEC_SIZE指定的尺寸
+> - AT_MOST：view可以是任意尺寸，但不可以大于SPEC_SIZE。eg：WRAP_CONTENT
+> - UNSPECIFIED：view测量时可以无视SPEC_SIZE，可以是任意的尺寸。eg：ScrollView
+
+### FrameLayout的测量过程
+
+相关源码：[onMeasure()](#onMeasure()) [resolveSizeAndState()](#resolveSizeAndState())
+
+![FrameLayout测量流程](../sources/view绘制/FrameLayout测量流程.png)**childMeasuredState**
+
+说明：所有的子控件状态位（高8位）或运算而来，用来决定本控件的状态位
+
+问题：子控件AT_MOST、EXACTLY都有的话，会导致其31、32位都是1，然而这不属于MeasureSpec
+
+测试：在frameLayout中添加多个TextView，任意修改各控件尺寸。
+
+结果：MeasureSpec.getMode(getMeasuredHeightAndState())的结果永远为0（size是有的）
+
+分析：TextView没管Spec_mode，ImageView则写死了为0.所以0|0=0.frameLayout的Spec_mode也一直是0
+
+### 宽高的获取
+
+1、LayoutParams：指定的尺寸。
+
+​	对应```android:layout_width="100dp"```
+
+2、View#getMeasuredHeight()/getMeasuredWidth() 测量的结果
+
+测量流程后有效，setMeasuredDimension()保存的宽高
+
+3、View#getWidth()/getHeight()
+
+布局流程后有效，根据坐标算出来的，实际大小。
+
+
+
+### 重载onMeasure原则
+
+- 控件在进行测量时，控件需要将它的padding尺寸计算在内，因为padding是其尺寸的一部分。
+- ViewGroup在进行测量时，需要将子控件的Margin尺寸计算在内。因为子控件的Margin尺寸是父控件尺寸的一部分。
+- ViewGroup为子控件准备Measure Spec时，SPEC_MODE应取决于子控件的LayoutParams.width/height的取值。取值为MATCH_PARENT或一个确定的尺寸时应为EXACTLY，WRAP_CONTENT时应为AT_MOST。至于SPEC_SIZE，应理解为ViewGroup对子控件尺寸的限制，即ViewGroup按照其实际意图所允许子控件获得的最大尺寸。并且需要扣除子控件的Margin尺寸
+- 虽然测量的目的在于确定尺寸，与位置无关。但是子控件的位置时ViewGroup进行预测量时必须首先考虑的。因为子控件的位置既决定了子控件可用的剩余尺寸，也决定了父控件的尺寸(当父控件的LayoutParams.width\height为WRAP_CONTENT时)
+- 在测量结果中添加MEASURED_STATE_TOO_SMALL需要做到实事求是。当一个方向上的空间不足以显示其内容时应考虑利用另一个方向上的空间，例如对文字进行换行处理，因为添加这个标记有可能导致父控件对其进行重新测量从而降低效率。
+- 当子控件的测量结果中包含MEASURE_STATE_TOO_SMALL标记时，只要有可能，父控件就应当调整给予子控件的MeasureSoec，并进行重新测量。倘如没有调整的余地。父控件也应当将MEASURE_STATE_TOO_SMALL加入自己的测量结果中，让它的父控件尝试进行调整。
+- ViewGroup在测量子控件时必须调用子控件的measure(),而不能直接调用其onMeasure()方法。直接调用onMeasure()方法的最严重后果是子控件的PFLAG_LAYOUT_REQUIRED标识无法加入mPrivateFlag中，从而导致子控件无法进行布局。
+
+## 布局流程
+
+相关源码：[layout()](#layout())
+
+入口：ViewRootImpl.performLayout()
+
+View通过mLeft、mTop、mRight、mBottom成员变量保存坐标值；tip:相对父容器，非窗口坐标系。
+
+![layout左上右下](../sources/view绘制/layout左上右下.jpg)
+
+
+
+## 绘制流程
+
+相关源码：[performDraw()](#performDraw()) [draw(fullRedrawNeeded)](#draw(fullRedrawNeeded))
+
+![绘制流程](../sources/view绘制/绘制流程.png)
+
+
+
+###  软件绘制
+
+相关源码：[drawSoftware()](#drawSoftware()) [draw()](#draw())  [dispatchDraw()](#dispatchDraw())
+
+> 1、mSurface// WMS.addView()时创建
+
+> 2、Canvas canvas=mSurface.lockCanvas();// 获取一个以此surface为画布的canvas
+
+> 3、mView.draw(canvas)；//使用canvas进行绘制，由根控件，沿控件树传递绘制流程
+
+> 4、Surface.unlockCanvasAndPost(canvas)//显示绘制的内容到屏幕
+
+图形库：Skia
+
+
+
+### 硬件绘制
+
+相关源码：[HardwareRenderer.draw()](#HardwareRenderer.draw())
+
+![硬件绘制](../sources/view绘制/硬件绘制.png)
+
+**图形库**：openGL ES 2.0
+
+**输出目标**：Android的Surface封装成的EGLSurface
+
+**入口**：HardwareRenderer.draw(),抽象类，子类为[GLRenderer](https://android.googlesource.com/platform/frameworks/base/+/4c1d506d7bf803f4fb5f8146fe7f81c3488c3225/core/java/android/view/GLRenderer.java)，4.4之后可能是ThreadedRenderer
+
+**信息传递流程**：Canvas(Java API) —> OpenGL(C/C++ Lib) —> 驱动程序 —> GPU。
+
+- **DisplayList**
+
+  DisplayList是一个基本绘制元素，包含元素原始属性（位置、尺寸、角度、透明度等），对应Canvas的drawXxx()方法。
+
+- **RenderNode**
+
+  一个RenderNode包含若干个DisplayList，通常一个RenderNode对应一个View，包含View自身及其子View的所有DisplayList。
+
+- **HardwareCanvas**
+
+  canvas子类，提供了诸如drawDisplayList()、drawHardwareLayer()等硬件加速特有操作。同时将Canvas类中的操作重定向到硬件加速图形库中
+
+- **updateDisplayListIfDirty()**:去获得一张Canvas，用来记录绘制命令
+
+
+
+### 坐标系转换
+
+相关源码：[draw(ViewGroup,Canvas,long )](#draw(ViewGroup,Canvas,long ))
+
+如何把父控件的canvas转换成，子控件的canvas
+
+```java
+	// 平移坐标系
+	canvas.translate(X轴正方向移动距离，Y轴正方向移动距离)；
+  //范围裁切，绘制范围会被限制在裁切范围内。
+  canvas.clipRect(left, top, right, bottom); 
+```
+
+### 绘图缓存
+
+ListView在滑动时，每个Item的内容不会发生改变。保存item的快照使用，则不需要对item进行绘制。
+
+**软件绘制**：在View类中```Bitmap mDrawingCache;```保存了快照。
+
+**硬件绘制**：todo
+
+**应用**
+
+```java
+// 关闭绘制缓存
+view.setLayerType(View.LAYER_TYPE_NONE,null);
+// 开启绘制缓存，使用软件绘制
+view.setLayerType(View.LAYER_TYPE_SOFTWARE,null);
+// 开启绘制缓存，使用硬件绘制。如未开启硬件加速，则使用软件绘制
+view.setLayerType(View.LAYER_TYPE_HARDWARE,null);
+```
+
+
+
+## Canvas 基础
+
+**Canvas状态**
+
+对画布进行转换（eg平移裁剪），一顿绘制后，想把画布再变成转换前的状态。
+
+save()保存当前画布的状态，一顿绘制后，restore()恢复之前的状态
+
+**Layer图层**
+
+一个canvas链接一个bitmap，bitmap可以看成我们平时说的画布，最终的东西都是绘制在这上面的
+
+每次调用drawXXX方法会生成一个新的透明layer,东西被绘制在layer上，然后最终会被绘制在bitmap上。
+
+**savelayer()**会生成新的Bitmap和Canvas,然后再调用drawXX()也会生成新的layer，但这个layer会被绘制到新生成的Bitmap上，其他所有的rotate，clip等操作，都会作用在新的Canvas上（或者新指向的bitmap上），不会影响原始的Canvas和bitmap），直到调用restore函数，才会被最终绘制到原始Canvas连接的bitmap上。
+
+| 函数             | 说明                                                         |
+| ---------------- | ------------------------------------------------------------ |
+| save()           | 把当前的画布的状态进行保存，然后放入Canvas状态栈中           |
+| saveLayer()      | 类似save(),但会新建一个bitmap，后续的操作都会作用在这个bitmap上。直到restore()时,再合并到原始的bitmap上。 |
+| saveLayerAlpha() | 类似saveLayer()，可以指定透明度                              |
+| restore()        | 把栈中最顶层的画布状态取出来，并按照这个状态恢复当前的画布，并在这个画布上做画。 |
+| restoreToCount() | 可指定取出栈顶第几个状态                                     |
+| getSaveCount()   | 获取栈中保存的状态信息的个数，计算方式等于save()的次数减去restore的次数。一次没调用过save(),返回值为1，不是0； |
+
+## requestLayout分析
+
+**1、沿控件树回溯到ViewRootImpl#requestLayout() ,沿途标记脏区**
+
+tip：根控件的mParent是ViewRootImpl。ViewRootImpl实现了ViewParent接口，在ViewRootImpl#setView()将根控件的mParent设置为ViewRoot。所以最终回溯到ViewRootImpl#requestLayout().
+
+```java
+// View函数，ViewGroup默认没有复写此方法，所以也是用这个
+public void requestLayout() {
+    if (mMeasureCache != null) mMeasureCache.clear();
+    if (mAttachInfo != null && mAttachInfo.mViewRequestingLayout == null) {
+        // 父控件正在进行布局
+        ViewRootImpl viewRoot = getViewRootImpl();
+        if (viewRoot != null && viewRoot.isInLayout()) {
+            if (!viewRoot.requestLayoutDuringLayout(this)) {
+                return;
+            }
+        }
+        mAttachInfo.mViewRequestingLayout = this;
+    }
+		// 1、添加标记，将本控件设置为脏区
+    mPrivateFlags |= PFLAG_FORCE_LAYOUT;// 需要重新布局
+    mPrivateFlags |= PFLAG_INVALIDATED;// 标记脏区
+
+    if (mParent != null && !mParent.isLayoutRequested()) {
+      	// 2、控件树回溯到ViewRootImpl#requestLayout() 
+        mParent.requestLayout();
+    }
+    if (mAttachInfo != null && mAttachInfo.mViewRequestingLayout == this) {
+        mAttachInfo.mViewRequestingLayout = null;
+    }
+}
+```
+
+**2、修改mLayoutRequested标记，标示需要重新布局**
+
+```java
+// ViewRootImpl
+@Override
+public void requestLayout() {
+    if (!mHandlingLayoutInLayoutRequest) {
+        checkThread();// 检查执行线程必须是主线程
+        mLayoutRequested = true;// 1、修改标记，标示需要重新布局
+        scheduleTraversals();// 2、触发绘制，invalidate()也是使用此方法
+    }
+}
+```
+
+**3、将runnable添加到编舞者的队列中等待执行**
+
+```java
+// ViewRootImpl
+// 待执行的runnable，run()执行doTraversal() ，最终调用 performTraversals();
+final TraversalRunnable mTraversalRunnable = new TraversalRunnable();
+// 请求&接收VSync 信号（硬件每 16 毫秒产一个）
+Choreographer mChoreographer;
+void scheduleTraversals() {
+    if (!mTraversalScheduled) {
+        mTraversalScheduled = true;
+        mTraversalBarrier = mHandler.getLooper().getQueue().postSyncBarrier();
+      	// runnbale会添加到编舞者的CallbackQueue[] mCallbackQueues;成员变量中
+        mChoreographer.postCallback(
+                Choreographer.CALLBACK_TRAVERSAL, mTraversalRunnable, null);
+        if (!mUnbufferedInputDispatch) {
+            scheduleConsumeBatchedInput();
+        }
+        notifyRendererOfFramePending();
+        pokeDrawLockIfNeeded();
+    }
+}
+```
+
+**4、runnable被执行，触发绘制入口函数 performTraversals();**
+
+```java
+void doTraversal() {
+    if (mTraversalScheduled) {
+        mTraversalScheduled = false;
+        mHandler.getLooper().getQueue().removeSyncBarrier(mTraversalBarrier);
+        if (mProfile) {
+            Debug.startMethodTracing("ViewAncestor");
+        }
+				// 绘制入口函数得到执行
+        performTraversals();
+        if (mProfile) {
+            Debug.stopMethodTracing();
+            mProfile = false;
+        }
+    }
+}
+```
+
+## invalidate与脏区
+
+**1、触发绘制的流程**
+
+与requestLayout()类似，回溯到ViewRootImpl#invalidateChildInParent(),会使用与requestLayout()相同的函数scheduleTraversals()，最终执行performTraversals()开始绘制。回溯的核心代码是ViewGroup#invalidateChild().
+
+由于没有设置ViewRootImpl#mLayoutRequest标示，会跳过测量&布局流程，直接执行绘制
+
+**2、脏区**
+
+为保证绘制效率，控件树仅对需要重新绘制的区域（即脏区）进行绘制；
+
+所以在向上回溯过程中，需要收集脏区信息，保存在ViewRoot成员变量```Rect mDirty``中
+
+绘制时需要使用mDirty作为依据，创建canvas。
+
+eg：软件绘制```canvas = mSurface.lockCanvas(dirty);```
+
+**3、脏区的搜集**
+
+一个子控件的颜色发生改变，用Rect描述脏区，**坐标系是此控件的**
+
+⬇️传递Rect给父控件
+
+父控件收到Rect，转换坐标系为本控件
+
+⬇️传递Rect给父控件
+
+。。。
+
+⬇️传递Rect给父控件
+
+根控件收到Rect，转换坐标系为本控件
+
+⬇️传递Rect给父控件
+
+ViewRoot收到Rect，转换坐标系为本控件，终止向上回溯，执行scheduleTraversals()开始绘制；
+
+```java
+    /**
+     * 用Rect描述脏区，传递给父控件
+     * View函数，invalidate()有多个重载，最终都会走这个方法
+     * @param l 子控件坐标系，距离左
+     * @param t 子控件坐标系，距离上
+     * @param r 子控件坐标系，距离右
+     * @param b 子控件坐标系，距离下
+     * @param invalidateCache 绘制缓存清空，默认ture
+     * @param fullInvalidate  完全重绘，默认ture
+     */
+void invalidateInternal(int l, int t, int r, int b, boolean invalidateCache,
+        boolean fullInvalidate) {
+    if (mGhostView != null) {
+        mGhostView.invalidate(true);
+        return;
+    }
+		//处理该子View不可见/处于动画中
+    if (skipInvalidate()) {
+        return;
+    }
+    // Reset content capture caches
+    mCachedContentCaptureSession = null;
+		// 判断是否需要重绘，不需要则流程到此结束，不再重绘。
+    if ((mPrivateFlags & (PFLAG_DRAWN | PFLAG_HAS_BOUNDS)) == (PFLAG_DRAWN | PFLAG_HAS_BOUNDS)
+            || (invalidateCache && (mPrivateFlags & PFLAG_DRAWING_CACHE_VALID) == PFLAG_DRAWING_CACHE_VALID)
+            || (mPrivateFlags & PFLAG_INVALIDATED) != PFLAG_INVALIDATED
+            || (fullInvalidate && isOpaque() != mLastIsOpaque)) {
+      // 完全重绘  
+      if (fullInvalidate) {
+          	// 控件是否为“实心”，即无法透过此控件所属区域，看到此控件之下的内容。
+            mLastIsOpaque = isOpaque();
+            mPrivateFlags &= ~PFLAG_DRAWN;
+        }
+				// 添加脏区标识
+        mPrivateFlags |= PFLAG_DIRTY;
+				// 清除绘制缓存
+        if (invalidateCache) {
+            mPrivateFlags |= PFLAG_INVALIDATED;
+            mPrivateFlags &= ~PFLAG_DRAWING_CACHE_VALID;
+        }
+
+        // 将脏区区域（Rect）传递给父容器
+        final AttachInfo ai = mAttachInfo;
+        final ViewParent p = mParent;
+        if (p != null && ai != null && l < r && t < b) {
+            final Rect damage = ai.mTmpInvalRect;// 重点：脏区的创建
+            damage.set(l, t, r, b);// 左上右下描述矩形
+            p.invalidateChild(this, damage);// 传给父控件
+        }
+
+        // Damage the entire projection receiver, if necessary.
+        if (mBackground != null && mBackground.isProjected()) {
+            final View receiver = getProjectionReceiver();
+            if (receiver != null) {
+                receiver.damageInParent();
+            }
+        }
+    }
+}
+```
+
+
+
+```java
+    /**
+     * ViewGroup的函数
+     * @param child  请求重绘的子控件
+     * @param dirty	 所有所属子控件的脏区
+     */
+public final void invalidateChild(View child, final Rect dirty) {
+    final AttachInfo attachInfo = mAttachInfo;
+  	// 如果开了硬件加速，另外处理
+    if (attachInfo != null && attachInfo.mHardwareAccelerated) {
+        onDescendantInvalidated(child, child);
+        return;
+    }
+
+    ViewParent parent = this;
+    if (attachInfo != null) {
+        // 子控件正在绘制动画中，标识
+        final boolean drawAnimation = (child.mPrivateFlags & PFLAG_DRAW_ANIMATION) != 0;
+
+        // 子控件矩阵.
+        Matrix childMatrix = child.getMatrix();
+        if (child.mLayerType != LAYER_TYPE_NONE) {
+            mPrivateFlags |= PFLAG_INVALIDATED;// 添加本控件脏区标识
+            mPrivateFlags &= ~PFLAG_DRAWING_CACHE_VALID;// 清除本控件绘制缓存标识
+        }
+
+      	// 储存子View的mLeft和mTop值
+        final int[] location = attachInfo.mInvalidateChildLocation;
+        location[CHILD_LEFT_INDEX] = child.mLeft;
+        location[CHILD_TOP_INDEX] = child.mTop;
+      	// 下面这段应该是处理子控件不透明、正在动画或转换，对脏区需要一些处理
+      	// isIdentity():判断当前矩阵是否为单位矩阵。
+        if (!childMatrix.isIdentity() ||
+                (mGroupFlags & ViewGroup.FLAG_SUPPORT_STATIC_TRANSFORMATIONS) != 0) {
+            RectF boundingRect = attachInfo.mTmpTransformRect;
+            boundingRect.set(dirty);
+            Matrix transformMatrix;
+            if ((mGroupFlags & ViewGroup.FLAG_SUPPORT_STATIC_TRANSFORMATIONS) != 0) {
+                Transformation t = attachInfo.mTmpTransformation;
+                boolean transformed = getChildStaticTransformation(child, t);
+                if (transformed) {
+                    transformMatrix = attachInfo.mTmpMatrix;
+                    transformMatrix.set(t.getMatrix());
+                    if (!childMatrix.isIdentity()) {
+                        transformMatrix.preConcat(childMatrix);
+                    }
+                } else {
+                    transformMatrix = childMatrix;
+                }
+            } else {
+                transformMatrix = childMatrix;
+            }
+            transformMatrix.mapRect(boundingRect);
+            dirty.set((int) Math.floor(boundingRect.left),
+                    (int) Math.floor(boundingRect.top),
+                    (int) Math.ceil(boundingRect.right),
+                    (int) Math.ceil(boundingRect.bottom));
+        }
+/*====================下面核心：沿控件树回溯知道ViewRoot，同时整合脏区======================*/
+        do {
+            View view = null;
+            if (parent instanceof View) {
+              	// 父控件如不是View，就是ViewRootImpl
+                view = (View) parent;
+            }
+          	// 下面开始View与parent都是指父控件，同一个
+						// 正在动画
+            if (drawAnimation) {
+                if (view != null) {
+                    view.mPrivateFlags |= PFLAG_DRAW_ANIMATION;
+                } else if (parent instanceof ViewRootImpl) {
+                    ((ViewRootImpl) parent).mIsAnimating = true;
+                }
+            }
+
+            // 处理脏区标识
+            if (view != null) {
+                if ((view.mPrivateFlags & PFLAG_DIRTY_MASK) != PFLAG_DIRTY) {
+                    view.mPrivateFlags = (view.mPrivateFlags & ~PFLAG_DIRTY_MASK) | PFLAG_DIRTY;
+                }
+            }
+						// 继续向父容器回溯
+          	// 1、parent的父控件是ViewGroup
+          	// 返回parent的父控件，然后继续回溯。执行ViewGroup#invalidateChildInParent()
+          	// 功能：offset()把脏区坐标系转成父控件的；union()把脏区与父控件的区域求并集
+          	// 2、parent的父控件是ViewRoot
+          	// 返回null，终止回溯，触发绘制入口函数，具体下面分析
+            parent = parent.invalidateChildInParent(location, dirty);
+          	// 此时parent是父父控件
+            if (view != null) {
+                // view是父控件，正常不会是null，下面处理父控件的脏区
+                Matrix m = view.getMatrix();// 父控件的矩阵
+                if (!m.isIdentity()) {
+                  	// attachInfo：View.AttachInfo;这个是当前控件的attachInfo
+                  	// mTmpTransformRect:RectF，
+                    RectF boundingRect = attachInfo.mTmpTransformRect;
+                    boundingRect.set(dirty);// Rect转成RectF
+                  // 用父控件的矩阵转换boundingRect，并把结果放入boundingRect，即boundingRect改变了
+                    m.mapRect(boundingRect);
+                  	// 再把boundingRect的结果赋给dirty，到这里dirty的坐标系应该是父控件的了
+                    dirty.set((int) Math.floor(boundingRect.left),
+                            (int) Math.floor(boundingRect.top),
+                            (int) Math.ceil(boundingRect.right),
+                            (int) Math.ceil(boundingRect.bottom));
+                }
+            }
+          // 向上回溯到父父控件是ViewRoot，parent会是null，回溯过程终止
+        } while (parent != null);
+    }
+}
+```
+
+
+
+```java
+// ViewRootImpl函数
+@Override
+public ViewParent invalidateChildInParent(int[] location, Rect dirty) {
+    checkThread();// 调用必须主线程
+    if (dirty == null) {
+        invalidate();// 触发绘制，脏区为全部
+        return null;
+    } else if (dirty.isEmpty() && !mIsAnimating) {
+        return null;
+    }
+		// 处理滚动偏移，略
+    if (mCurScrollY != 0 || mTranslator != null) {
+        mTempRect.set(dirty);
+        dirty = mTempRect;
+        if (mCurScrollY != 0) {
+            dirty.offset(0, -mCurScrollY);
+        }
+        if (mTranslator != null) {
+            mTranslator.translateRectInAppWindowToScreen(dirty);
+        }
+        if (mAttachInfo.mScalingRequired) {
+            dirty.inset(-1, -1);
+        }
+    }
+		// 进行下一步
+  	// 1、与已有的脏区求并集
+  	// 2、触发绘制，执行scheduleTraversals();
+    invalidateRectOnScreen(dirty);
+		// 一定会返回null，终止回溯过程
+    return null;
+}
+```
+
+
+
 ## ViewRootImpl
 
 创建于WindowManagerGlobal.addView()中,
@@ -26,7 +594,7 @@ Window提供了一个canvas，绘制区域为整个窗口
 | Rect mWinFrame                             | 描述当前窗口的位置和大小。与WMS中的WindowState.mFrame保持一致 |
 | W mWindow                                  | W是IWindow.Stub的子类。作为WMS中新窗口的ID，并接收来自WMS的回调 |
 | View.AttachInfo mAttachInfo                | 储存控件树依附的窗口信息，控件树中每个view会将这个对象保存在自己mAttachInfo中。信息包含：WindowSession，窗口实例(即mWindow)、ViewRootImpl实例、窗口所属的Display、窗口的Surface、窗口在屏幕上的位置等。 |
-| Choreographer mChoreographer               | 接收VSync 信号，硬件每 16 毫秒产一个 VSync 信号，刷新屏幕    |
+| Choreographer mChoreographer               | 请求接收VSync 信号，硬件每 16 毫秒产一个 VSync 信号，刷新屏幕 |
 | ViewRootHandler mHandler                   | 主线程的Handler，安排其他线程事件在主线程上执行。eg：mWindow引发的回调（WMS的事件），处理view.post(runnable) |
 | Surface mSurface                           | mSurface.lockCanvas()得canvas，存储在共享内存，app创建空壳，WMS创建内容，然后拷贝回给壳的outSurface变量 |
 | View mView                                 | 根view。eg：DecorView，Activity 中的顶级 View                |
@@ -39,19 +607,12 @@ Window提供了一个canvas，绘制区域为整个窗口
 
 WindowManagerGlobal:进程单例，存储所有 Window 所对应的 ViewRootImpl
 
-Surface mSurface :画布，SurfaceFling使用
-
-## performTraversals() 
-
-绘制流程的核心函数，onMeasure()、onLayout()、onDraw()都是在其执行过程中触发
-
-- 准备阶段：搜集信息、执行view.post(runnable)
-- 协商测量：窗口的尺寸需要根据mView改变(dialog)，由ViewRootImpl.measureHierarchy()实现。
-
-![performTraversals工作流程](../sources/view绘制/performTraversals工作流程.png)
+### performTraversals() 
 
 ```java
 // api 29
+// 保存需要提供给View的信息
+View.AttachInfo mAttachInfo;
 private void performTraversals() {
   	/*===================准备阶段=======================*/
     // 将mView保存在局部变量host中，以此提高访问效率
@@ -70,13 +631,14 @@ private void performTraversals() {
     int desiredWindowHeight;
 
     final int viewVisibility = getHostVisibility();
+  	// 窗口可见性发生改变没
     final boolean viewVisibilityChanged = !mFirst
             && (mViewVisibility != viewVisibility || mNewSurfaceNeeded
             || mAppVisibilityChanged);
     mAppVisibilityChanged = false;
     final boolean viewUserVisibilityChanged = !mFirst &&
             ((mViewVisibility == View.VISIBLE) != (viewVisibility == View.VISIBLE));
-
+		
     WindowManager.LayoutParams params = null;
     if (mWindowAttributesChanged) {
         mWindowAttributesChanged = false;
@@ -108,9 +670,9 @@ private void performTraversals() {
       	// mAttachInfo会被传递给每个view，同时触发onAttachedToWindow()回调
         mFullRedrawNeeded = true;
         mLayoutRequested = true;
-
+				// 用于描述手机设备上的配置信息,可获取屏幕尺寸
         final Configuration config = mContext.getResources().getConfiguration();
-      	// 采用窗口最大可以使用的尺寸
+      	// 获取窗口的尺寸
         if (shouldUseDisplaySize(lp)) {
             // NOTE -- system code, won't try to do compat mode.
             Point size = new Point();
@@ -121,32 +683,32 @@ private void performTraversals() {
             desiredWindowWidth = mWinFrame.width();
             desiredWindowHeight = mWinFrame.height();
         }
+      	// 搜集需要传递给View的信息
         mAttachInfo.mUse32BitDrawingCache = true;
         mAttachInfo.mWindowVisibility = viewVisibility;
         mAttachInfo.mRecomputeGlobalAttributes = false;
         mLastConfigurationFromResources.setTo(config);
         mLastSystemUiVisibility = mAttachInfo.mSystemUiVisibility;
-        // Set the layout direction if it has not been set before (inherit is the default)
+        // 设置根控件layout方向（横竖）
         if (mViewLayoutDirectionInitial == View.LAYOUT_DIRECTION_INHERIT) {
             host.setLayoutDirection(config.getLayoutDirection());
         }
       	// view与window绑定，触发onAttachedToWindow()回调
         host.dispatchAttachedToWindow(mAttachInfo, 0);
         mAttachInfo.mTreeObserver.dispatchOnWindowAttachedChange(true);
-        dispatchApplyInsets(host);
+        dispatchApplyInsets(host);// 处理状态栏、底部导航栏等
     } else {
       	// 非第一次遍历，采用窗口的最新尺寸
         desiredWindowWidth = frame.width();
         desiredWindowHeight = frame.height();
         if (desiredWindowWidth != mWidth || desiredWindowHeight != mHeight) {
           	// 窗口尺寸！=ViewRootImpl尺寸，即WMS改变了窗口尺寸
-            if (DEBUG_ORIENTATION) Log.v(mTag, "View " + host + " resized to: " + frame);
             mFullRedrawNeeded = true;// 需要进行完整的重绘以适应新的窗口尺寸
             mLayoutRequested = true;// 需要对控件树进行重新布局
             windowSizeMayChange = true;//控件树有可能拒绝接受新的窗口尺寸，如发生window需要设置新尺寸
         }
     }
-
+		// 处理视图可见性发生了改变
     if (viewVisibilityChanged) {
         mAttachInfo.mWindowVisibility = viewVisibility;
         host.dispatchWindowVisibilityChanged(viewVisibility);
@@ -158,13 +720,9 @@ private void performTraversals() {
             destroyHardwareResources();
         }
         if (viewVisibility == View.GONE) {
-            // After making a window gone, we will count it as being
-            // shown for the first time the next time it gets focus.
             mHasHadWindowFocus = false;
         }
     }
-
-    // Non-visible windows can't hold accessibility focus.
     if (mAttachInfo.mWindowVisibility != View.VISIBLE) {
         host.clearAccessibilityFocus();
     }
@@ -181,7 +739,6 @@ private void performTraversals() {
     boolean layoutRequested = mLayoutRequested && (!mStopped || mReportNextDraw);
     if (layoutRequested) {
         final Resources res = mView.getContext().getResources();
-
         if (mFirst) {
           	// 确认view树进入触控模式
             mAttachInfo.mInTouchMode = !mAddedTouchMode;
@@ -190,7 +747,7 @@ private void performTraversals() {
             if (!mPendingOverscanInsets.equals(mAttachInfo.mOverscanInsets)) {
                 insetsChanged = true;
             }
-          	// mContentInsets：描述控件在布局时必须预留的空间
+          	// mContentInsets：描述控件在布局时必须预留的空间（状态栏）
             if (!mPendingContentInsets.equals(mAttachInfo.mContentInsets)) {
                 insetsChanged = true;// 进行布局流程条件之一
             }
@@ -237,7 +794,7 @@ private void performTraversals() {
     }
 
     if (collectViewAttributes()) {
-        params = lp;
+        params = lp;// params：window的LayoutParams
     }
     if (mAttachInfo.mForceReportNewAttributes) {
         mAttachInfo.mForceReportNewAttributes = false;
@@ -246,18 +803,26 @@ private void performTraversals() {
 		// mAttachInfo.mViewVisibilityChanged:mView的可见性发生了改变
     if (mFirst || mAttachInfo.mViewVisibilityChanged) {
         mAttachInfo.mViewVisibilityChanged = false;
+      	// 软键盘模式
         int resizeMode = mSoftInputMode &
+          			// SOFT_INPUT_MASK_ADJUST：窗口应当主动调整，以适应软输入窗口。
                 WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST;
-        // If we are in auto resize mode, then we need to determine
-        // what mode to use now.
         if (resizeMode == WindowManager.LayoutParams.SOFT_INPUT_ADJUST_UNSPECIFIED) {
+          	// 未指定状态，系统将根据窗口内容尝试选择一个输入法样式。
             final int N = mAttachInfo.mScrollContainers.size();
             for (int i=0; i<N; i++) {
                 if (mAttachInfo.mScrollContainers.get(i).isShown()) {
+                  	// SOFT_INPUT_ADJUST_RESIZE：当输入法显示时，允许窗口重新计算尺寸，
+                  	// 使内容不被输入法所覆盖。不可与SOFT_INPUT_ADJUSP_PAN混合使用；
+                  	// 如果两个都没有设置，系统将根据窗口内容自动设置一个选项。
                     resizeMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;
                 }
             }
             if (resizeMode == 0) {
+              	// SOFT_INPUT_ADJUST_PAN= 0x20
+              	// 输入法显示时平移窗口。它不需要处理尺寸变化，框架能够移动窗口以确保输入焦点可见。
+              	// 不可与SOFT_INPUT_ADJUST_RESIZE混合使用；
+              	// 如果两个都没有设置，系统将根据窗口内容自动设置一个选项。
                 resizeMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN;
             }
             if ((lp.softInputMode &
@@ -265,29 +830,29 @@ private void performTraversals() {
                 lp.softInputMode = (lp.softInputMode &
                         ~WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST) |
                         resizeMode;
-                params = lp;
+                params = lp; // 设置window的LayoutParams
             }
         }
     }
 
     if (params != null) {
+      	// 窗口背景
         if ((host.mPrivateFlags & View.PFLAG_REQUEST_TRANSPARENT_REGIONS) != 0) {
             if (!PixelFormat.formatHasAlpha(params.format)) {
-                params.format = PixelFormat.TRANSLUCENT;
+                params.format = PixelFormat.TRANSLUCENT; // 背景设置成透明
             }
         }
+      	// activity 是否能在status bar 底部绘制
         mAttachInfo.mOverscanRequested = (params.flags
                 & WindowManager.LayoutParams.FLAG_LAYOUT_IN_OVERSCAN) != 0;
     }
-
+		// 对应fitSystemWindows，处理系统ui（状态）与控件遮挡
     if (mApplyInsetsRequested) {
         mApplyInsetsRequested = false;
         mLastOverscanRequested = mAttachInfo.mOverscanRequested;
         dispatchApplyInsets(host);
         if (mLayoutRequested) {
-            // Short-circuit catching a new layout request here, so
-            // we don't need to go through two layout passes when things
-            // change due to fitting system windows, which can happen a lot.
+            // 调用requestFitSystemWindows()可能会引起window重新布局
             windowSizeMayChange |= measureHierarchy(host, lp,
                     mView.getContext().getResources(),
                     desiredWindowWidth, desiredWindowHeight);
@@ -299,7 +864,7 @@ private void performTraversals() {
         mLayoutRequested = false;
     }
 		// 确定窗口是否需要改变尺寸
-  	// todo：layoutRequested被重置了，为什么会变成true？
+  	// layoutRequested被重置了，为什么会变成true？答：注意重置的是成员变量
   	// windowSizeMayChange==true：WMS改变了窗口尺寸/当前窗口为悬浮窗口
     boolean windowShouldResize = layoutRequested && windowSizeMayChange
         && ((mWidth != host.getMeasuredWidth() || mHeight != host.getMeasuredHeight())
@@ -349,6 +914,7 @@ private void performTraversals() {
                 if (mAttachInfo.mThreadedRenderer.pause()) {
                     mDirty.set(0, 0, mWidth, mHeight);
                 }
+              	// 接收Vysnc信号的，告诉它视图重新布局了
                 mChoreographer.mFrameInfo.addFlags(FrameInfo.FLAG_WINDOW_LAYOUT_CHANGED);
             }
           	// binder代理，对应WMS.relayoutWindow(),改变了窗口尺寸
@@ -360,6 +926,7 @@ private void performTraversals() {
                         INVALID_DISPLAY /* same display */);
                 updatedConfiguration = true;
             }
+          	// 下面很长一段是处理系统UI的
             final boolean overscanInsetsChanged = !mPendingOverscanInsets.equals(
                     mAttachInfo.mOverscanInsets);
             contentInsetsChanged = !mPendingContentInsets.equals(
@@ -515,7 +1082,7 @@ private void performTraversals() {
             }
         } catch (RemoteException e) {
         }
-				// 窗口布局完成
+				/* ======================= 窗口布局完成 ========================*/
       	// 保存窗口的位置与尺寸
         mAttachInfo.mWindowLeft = frame.left;
         mAttachInfo.mWindowTop = frame.top;
@@ -523,7 +1090,7 @@ private void performTraversals() {
             mWidth = frame.width();
             mHeight = frame.height();
         }
-
+				// 处理窗口的surface
         if (mSurfaceHolder != null) {
             if (mSurface.isValid()) {
                 mSurfaceHolder.mSurface = mSurface;
@@ -594,7 +1161,7 @@ private void performTraversals() {
                 int width = host.getMeasuredWidth();
                 int height = host.getMeasuredHeight();
                 boolean measureAgain = false;
-								// 需要按比例拉伸时，还需要重新测量一次
+								// 需要按比例拉伸时，还需要重新测量一次( android:layout_weight="1")
                 if (lp.horizontalWeight > 0.0f) {
                     width += (int) ((mWidth - width) * lp.horizontalWeight);
                     childWidthMeasureSpec = MeasureSpec.makeMeasureSpec(width,
@@ -607,14 +1174,10 @@ private void performTraversals() {
                             MeasureSpec.EXACTLY);
                     measureAgain = true;
                 }
-
                 if (measureAgain) {
-                    if (DEBUG_LAYOUT) Log.v(mTag,
-                            "And hey let's measure once more: width=" + width
-                            + " height=" + height);
+                  	// 拉伸后，再测量一遍
                     performMeasure(childWidthMeasureSpec, childHeightMeasureSpec);
                 }
-
                 layoutRequested = true;
             }
         }
@@ -660,12 +1223,12 @@ private void performTraversals() {
             }
         }
     }
-
+		// 触发onGlobalLayout()回调的标识
     if (triggerGlobalLayoutListener) {
         mAttachInfo.mRecomputeGlobalAttributes = false;
         mAttachInfo.mTreeObserver.dispatchOnGlobalLayout();
     }
-
+		// 处理系统UI的
     if (computesInternalInsets) {
         // Clear the original insets.
         final ViewTreeObserver.InternalInsetsInfo insets = mAttachInfo.mGivenInternalInsets;
@@ -700,10 +1263,9 @@ private void performTraversals() {
             }
         }
     }
-
+		// 下面处理焦点的，不具体分析，影响按键分发
     if (mFirst) {
         if (sAlwaysAssignFocus || !isInTouchMode()) {
-            // handle first focus request
             if (mView != null) {
                 if (!mView.hasFocus()) {
                     mView.restoreDefaultFocus();
@@ -711,12 +1273,6 @@ private void performTraversals() {
                 }
             }
         } else {
-            // Some views (like ScrollView) won't hand focus to descendants that aren't within
-            // their viewport. Before layout, there's a good change these views are size 0
-            // which means no children can get focus. After layout, this view now has size, but
-            // is not guaranteed to hand-off focus to a focusable child (specifically, the edge-
-            // case where the child has a size prior to layout and thus won't trigger
-            // focusableViewAvailable).
             View focused = mView.findFocus();
             if (focused instanceof ViewGroup
                     && ((ViewGroup) focused).getDescendantFocusability()
@@ -750,7 +1306,7 @@ private void performTraversals() {
     mActivityRelaunched = false;
     mViewVisibility = viewVisibility;
     mHadWindowFocus = hasWindowFocus;
-
+		// 处理焦点
     if (hasWindowFocus && !isInLocalFocusMode()) {
         final boolean imTarget = WindowManager.LayoutParams
                 .mayUseInputMethod(mWindowAttributes.flags);
@@ -805,15 +1361,7 @@ private void performTraversals() {
 }
 ```
 
-## 预测量
-
-原因：窗口的尺寸需要根据mView改变(悬浮窗口dialog)
-
-目的：判断控件树的尺寸==窗口尺寸，不一致则返回true，表示窗口需要重新布局
-
-![与绘制](../sources/view绘制/预测量.png)
-
-1、第一次window使用默认尺寸，
+### measureHierarchy()
 
 ```java
 /**
@@ -883,22 +1431,22 @@ private boolean measureHierarchy(final View host, final WindowManager.LayoutPara
 }
 ```
 
-## 测量流程
+### measure()
 
-![测量流程](../sources/view绘制/测量流程.png)
+
 
 ```java
 public final void measure(int widthMeasureSpec, int heightMeasureSpec) {
     boolean optical = isLayoutModeOptical(this);
+  	// 处理系统UI
    if (optical != isLayoutModeOptical(mParent)) {
-        Insets insets = getOpticalInsets();
+     		// （猜测）系统UI状态有变化
+        Insets insets = getOpticalInsets();// 包含系统UI（状态）的信息
         int oWidth  = insets.left + insets.right;
         int oHeight = insets.top  + insets.bottom;
         widthMeasureSpec  = MeasureSpec.adjust(widthMeasureSpec,  optical ? -oWidth  : oWidth);
         heightMeasureSpec = MeasureSpec.adjust(heightMeasureSpec, optical ? -oHeight : oHeight);
     }
-
-    // Suppress sign extension for the low bytes
     long key = (long) widthMeasureSpec << 32 | (long) heightMeasureSpec & 0xffffffffL;
     if (mMeasureCache == null) mMeasureCache = new LongSparseLongArray(2);
     /* 强制重新布局(mPrivateFlags & PFLAG_FORCE_LAYOUT)
@@ -924,7 +1472,7 @@ public final void measure(int widthMeasureSpec, int heightMeasureSpec) {
       	// 1、准备工作
         // 清除标记，PFLAG_MEASURED_DIMENSION_SET检查控件是否通过setMeasureDimension()储存了测量结果
         mPrivateFlags &= ~PFLAG_MEASURED_DIMENSION_SET;
-        resolveRtlPropertiesIfNeeded();
+        resolveRtlPropertiesIfNeeded();// 处理左对齐，右对齐
         int cacheIndex = forceLayout ? -1 : mMeasureCache.indexOfKey(key);
         if (cacheIndex < 0 || sIgnoreMeasureCache) {
             // 对本控件进行测量。每个View子类都会重载着方法进行测量
@@ -958,309 +1506,12 @@ public final void measure(int widthMeasureSpec, int heightMeasureSpec) {
 }
 ```
 
+### performDraw()
 
 
-### MeasureSpec
-
-MeasureSpec表示的是一个32位的整形值，它的高2位表示测量模式SpecMode，低30位表示父控件的建议尺寸。
 
 ```java
- final int specMode = MeasureSpec.getMode(measureSpec);
- final int specSize = MeasureSpec.getSize(measureSpec);
-```
-
-25～30位放标识，eg：View.MEASURED_STATE_TOO_SMALL = 0x01000000，第25位=1
-
-高8位是状态位：getMeasuredState()获取的就是状态位，其中高16位是宽度的，低16位是高度，即高度的SPEC_MODE被>>16位
-
-![MeasureSpec的结构](../sources/view绘制/MeasureSpec的结构.png)
-
-> - EXACTLY：view必须为SPEC_SIZE指定的尺寸
-> - AT_MOST：view可以是任意尺寸，但不可以大于SPEC_SIZE。eg：WRAP_CONTENT
-> - UNSPECIFIED：view测量时可以无视SPEC_SIZE，可以是任意的尺寸。eg：ScrollView
-
-### 重载onMeasure原则
-
-- 控件在进行测量时，控件需要将它的padding尺寸计算在内，因为padding是其尺寸的一部分。
-- ViewGroup在进行测量时，需要将子控件的Margin尺寸计算在内。因为子控件的Margin尺寸是父控件尺寸的一部分。
-- ViewGroup为子控件准备Measure Spec时，SPEC_MODE应取决于子控件的LayoutParams.width/height的取值。取值为MATCH_PARENT或一个确定的尺寸时应为EXACTLY，WRAP_CONTENT时应为AT_MOST。至于SPEC_SIZE，应理解为ViewGroup对子控件尺寸的限制，即ViewGroup按照其实际意图所允许子控件获得的最大尺寸。并且需要扣除子控件的Margin尺寸
-- 虽然测量的目的在于确定尺寸，与位置无关。但是子控件的位置时ViewGroup进行预测量时必须首先考虑的。因为子控件的位置既决定了子控件可用的剩余尺寸，也决定了父控件的尺寸(当父控件的LayoutParams.width\height为WRAP_CONTENT时)
-- 在测量结果中添加MEASURED_STATE_TOO_SMALL需要做到实事求是。当一个方向上的空间不足以显示其内容时应考虑利用另一个方向上的空间，例如对文字进行换行处理，因为添加这个标记有可能导致父控件对其进行重新测量从而降低效率。
-- 当子控件的测量结果中包含MEASURE_STATE_TOO_SMALL标记时，只要有可能，父控件就应当调整给予子控件的MeasureSoec，并进行重新测量。倘如没有调整的余地。父控件也应当将MEASURE_STATE_TOO_SMALL加入自己的测量结果中，让它的父控件尝试进行调整。
-- ViewGroup在测量子控件时必须调用子控件的measure(),而不能直接调用其onMeasure()方法。直接调用onMeasure()方法的最严重后果是子控件的PFLAG_LAYOUT_REQUIRED标识无法加入mPrivateFlag中，从而导致子控件无法进行布局。
-
-### FrameLayout测量分析
-
-![FrameLayout测量流程](../sources/view绘制/FrameLayout测量流程.png)
-
-```java
-// 宽|高为MATCH_PARENT的子控件的集合
-private final ArrayList<View> mMatchParentChildren; 
-@Override
-protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-    int count = getChildCount();
-		// 是否需要考虑子控件MATCH_PARENT
-  	// false：本frameLaout的尺寸被父控件定死了，我的子控件MATCH_PARENT则与我一样大
-  	// true：本frameLaout的尺寸，父控件让我自己定
-    final boolean measureMatchParentChildren =
-            MeasureSpec.getMode(widthMeasureSpec) != MeasureSpec.EXACTLY ||
-            MeasureSpec.getMode(heightMeasureSpec) != MeasureSpec.EXACTLY;
-    mMatchParentChildren.clear();
-
-    int maxHeight = 0;// 本控件需要的高度，最高的子控件（高度+margin）+本控件的padding
-    int maxWidth = 0;
-  	// 会决定FrameLayout的状态位（高8位），每一个子控件的高8位做|或运算而来
-  	// 然而基本不会，MeasureSpec.getMode()结果一般永远为0
-  	// 猜测是用来判断MEASURED_STATE_TOO_SMALL的
-  	// 宽及高的状态位，低16位是高的SPEC_MOED右移16位而来
-  	// 1、即任意子控件宽及高的状态位中包含了MEASURED_STATE_TOO_SMALL标签，
-  	// 则childState相应标识位会为1，
-  	// 2、如有子控件的宽SPEC_MODE=AT_MOST，则其32位为1。
-  	//    那么可能会出现32&31位均为1的情况，然而并没有下面再分析
-    int childState = 0;
-
-    for (int i = 0; i < count; i++) {
-        final View child = getChildAt(i);
-        if (mMeasureAllChildren || child.getVisibility() != GONE) {
-          	// 子控件进行测量，考虑margin，最终调用child.measure()
-            measureChildWithMargins(child, widthMeasureSpec, 0, heightMeasureSpec, 0);
-            final LayoutParams lp = (LayoutParams) child.getLayoutParams();
-          	// 以最宽的子控件为宽度
-            maxWidth = Math.max(maxWidth,
-                    child.getMeasuredWidth() + lp.leftMargin + lp.rightMargin);
-          // 以最高的子控件为高度  
-          maxHeight = Math.max(maxHeight,
-                    child.getMeasuredHeight() + lp.topMargin + lp.bottomMargin);
-          // getMeasuredState()：获取控件的Spec_MODE，高16位是高度，低16位是宽度
-          // combineMeasuredStates()两个参数做|或运算
-          // 任意子控件有MEASURED_STATE_TOO_SMALL标识，则childState对应标识位一定为1
-          childState = combineMeasuredStates(childState,child.getMeasuredState());
-            if (measureMatchParentChildren) {
-              	// 本FrameLayout的父控件没有定死我的尺寸
-                if (lp.width == LayoutParams.MATCH_PARENT ||
-                        lp.height == LayoutParams.MATCH_PARENT) {
-                  	// 记录MATCH_PARENT的子控件，FrameLayout尺寸确定了，再处理他们
-                    mMatchParentChildren.add(child);
-                }
-            }
-        }
-    }
-
-    // 需要的宽高，需要+FrameLayout的padding
-    maxWidth += getPaddingLeftWithForeground() + getPaddingRightWithForeground();
-    maxHeight += getPaddingTopWithForeground() + getPaddingBottomWithForeground();
-
-    // 背景的drawable最小尺寸，需要>控件尺寸
-    maxHeight = Math.max(maxHeight, getSuggestedMinimumHeight());
-    maxWidth = Math.max(maxWidth, getSuggestedMinimumWidth());
-
-    // 前景的drawable最小尺寸，需要>控件尺寸
-    final Drawable drawable = getForeground();
-    if (drawable != null) {
-        maxHeight = Math.max(maxHeight, drawable.getMinimumHeight());
-        maxWidth = Math.max(maxWidth, drawable.getMinimumWidth());
-    }
-		// resolveSizeAndState()下面有，计算FrameLayout尺寸.
-  	// setMeasuredDimension保存计算出的尺寸。
-    setMeasuredDimension(resolveSizeAndState(maxWidth, widthMeasureSpec, childState),
-            resolveSizeAndState(maxHeight, heightMeasureSpec,
-                    childState << MEASURED_HEIGHT_STATE_SHIFT));
-		// 确定了自己尺寸，MATCH_PARENT的子控件，需要重新测量
-    count = mMatchParentChildren.size();
-    if (count > 1) {
-        for (int i = 0; i < count; i++) {
-            final View child = mMatchParentChildren.get(i);
-            final MarginLayoutParams lp = (MarginLayoutParams) child.getLayoutParams();
-						// 处理宽
-            final int childWidthMeasureSpec;
-            if (lp.width == LayoutParams.MATCH_PARENT) {
-                final int width = Math.max(0, getMeasuredWidth()
-                        - getPaddingLeftWithForeground() - getPaddingRightWithForeground()
-                        - lp.leftMargin - lp.rightMargin);
-                childWidthMeasureSpec = MeasureSpec.makeMeasureSpec(
-                        width, MeasureSpec.EXACTLY);
-            } else {
-         
-                childWidthMeasureSpec = getChildMeasureSpec(widthMeasureSpec,
-                        getPaddingLeftWithForeground() + getPaddingRightWithForeground() +
-                        lp.leftMargin + lp.rightMargin,
-                        lp.width);
-            }
-
-            final int childHeightMeasureSpec;
-          	// 处理高
-            if (lp.height == LayoutParams.MATCH_PARENT) {
-                final int height = Math.max(0, getMeasuredHeight()
-                        - getPaddingTopWithForeground() - getPaddingBottomWithForeground()
-                        - lp.topMargin - lp.bottomMargin);
-                childHeightMeasureSpec = MeasureSpec.makeMeasureSpec(
-                        height, MeasureSpec.EXACTLY);
-            } else {
-                childHeightMeasureSpec = getChildMeasureSpec(heightMeasureSpec,
-                        getPaddingTopWithForeground() + getPaddingBottomWithForeground() +
-                        lp.topMargin + lp.bottomMargin,
-                        lp.height);
-            }
-						// 子控件的MeasureSpec确定了，子控件去测量
-            child.measure(childWidthMeasureSpec, childHeightMeasureSpec);
-        }
-    }
-}
-```
-
-```java
-/**
- * 计算期望大小和状态的工具方法.
- *
- * @param size 本控件期望的大小.
- * @param measureSpec 父控件给我的measureSpec限制.
- * @param childMeasuredState 会决定控件SPEC_MODE，其所有子控件状态位或运算而来，measureSpecde的高8位.	
- * 			
- * @return 算出来的MeasureSpec
- */
-public static int resolveSizeAndState(int size, int measureSpec, int childMeasuredState) {
-    final int specMode = MeasureSpec.getMode(measureSpec);// 高2位
-    final int specSize = MeasureSpec.getSize(measureSpec);// 低30位
-    final int result;// 返回的MeasureSpec
-    switch (specMode) {
-        case MeasureSpec.AT_MOST:// 32位是1，2<<30
-        		// 多大都行，但不能超过specSize。
-            if (specSize < size) {
-              	// 超过了specSize，则使用specSize，但是要添加标识
-              	// MEASURED_STATE_TOO_SMALL：表示限制的尺寸<控件期望的尺寸，第25位=1
-              	// 25～30位是状态位，在返回的MeasureSpec中，添加给的尺寸太小了标识
-              	// 即把第25位，置为1
-                result = specSize | MEASURED_STATE_TOO_SMALL;
-            } else {
-              	// 没超过使用size
-                result = size;
-            }
-            break;
-        case MeasureSpec.EXACTLY:// 31位是1,1<<30
-        		// 父控件制定了尺寸
-            result = specSize;
-            break;
-        case MeasureSpec.UNSPECIFIED://32&31位都是0,0<<30
-        // 父控件接受任意尺寸，eg:ScrollView
-        default:
-            result = size;
-    }
-  	// MEASURED_STATE_MASK：高8位都是1
-  	// result现在只有size数据，没有Space_mode，或运算给加上
-  	// 然而childMeasuredState一般都会为0，即MeasureSpec.getMode()结果一般为0
-    return result | (childMeasuredState & MEASURED_STATE_MASK);
-}
-```
-
-**childMeasuredState**
-
-说明：所有的子控件状态位（高8位）或运算而来，用来决定本控件的状态位
-
-问题：子控件AT_MOST、EXACTLY都有的话，会导致其31、32位都是1，然而这不属于MeasureSpec
-
-测试：在frameLayout中添加多个TextView，任意修改各控件尺寸。
-
-结果：MeasureSpec.getMode(getMeasuredHeightAndState())的结果永远为0（size是有的）
-
-分析：TextView没管Spec_mode，ImageView则写死了为0.所以0|0=0.frameLayout的Spec_mode也一直是0
-
-## 布局流程
-
-入口：ViewRootImpl.performLayout()
-
-View通过mLeft、mTop、mRight、mBottom成员变量保存坐标值
-
-![layout左上右下](../sources/view绘制/layout左上右下.jpg)
-
-```java
-public void layout(int l, int t, int r, int b) {
-    if ((mPrivateFlags3 & PFLAG3_MEASURE_NEEDED_BEFORE_LAYOUT) != 0) {
-        onMeasure(mOldWidthMeasureSpec, mOldHeightMeasureSpec);
-        mPrivateFlags3 &= ~PFLAG3_MEASURE_NEEDED_BEFORE_LAYOUT;
-    }
-		// 保存原始坐标
-    int oldL = mLeft;
-    int oldT = mTop;
-    int oldB = mBottom;
-    int oldR = mRight;
-		// setFrame(l, t, r, b)就是做mLeft=l。。。
-    boolean changed = isLayoutModeOptical(mParent) ?
-            setOpticalFrame(l, t, r, b) : setFrame(l, t, r, b);
-		// measure()时，mPrivateFlags添加了PFLAG_LAYOUT_REQUIRED
-		// 如此控件布局没有改变不会重布局，用此标记放行
-    if (changed || (mPrivateFlags & PFLAG_LAYOUT_REQUIRED) == PFLAG_LAYOUT_REQUIRED) {
-       // 如果这是一个ViewGroup，在onLayout()需要依次调用子控件layout()
-       onLayout(changed, l, t, r, b);
-        if (shouldDrawRoundScrollbar()) {
-            if(mRoundScrollbarRenderer == null) {
-                mRoundScrollbarRenderer = new RoundScrollbarRenderer(this);
-            }
-        } else {
-            mRoundScrollbarRenderer = null;
-        }
-				// 清除PFLAG_LAYOUT_REQUIRED标记
-        mPrivateFlags &= ~PFLAG_LAYOUT_REQUIRED;
-				// 通知OnLayoutChangeListener观察者
-        ListenerInfo li = mListenerInfo;
-        if (li != null && li.mOnLayoutChangeListeners != null) {
-            ArrayList<OnLayoutChangeListener> listenersCopy =
-                    (ArrayList<OnLayoutChangeListener>)li.mOnLayoutChangeListeners.clone();
-            int numListeners = listenersCopy.size();
-            for (int i = 0; i < numListeners; ++i) {
-                listenersCopy.get(i).onLayoutChange(this, l, t, r, b, oldL, oldT, oldR, oldB);
-            }
-        }
-    }
-
-    final boolean wasLayoutValid = isLayoutValid();
-    mPrivateFlags &= ~PFLAG_FORCE_LAYOUT;
-    mPrivateFlags3 |= PFLAG3_IS_LAID_OUT;
-    if (!wasLayoutValid && isFocused()) {
-        mPrivateFlags &= ~PFLAG_WANTS_FOCUS;
-        if (canTakeFocus()) {
-            // We have a robust focus, so parents should no longer be wanting focus.
-            clearParentsWantFocus();
-        } else if (getViewRootImpl() == null || !getViewRootImpl().isInLayout()) {
-            // This is a weird case. Most-likely the user, rather than ViewRootImpl, called
-            // layout. In this case, there's no guarantee that parent layouts will be evaluated
-            // and thus the safest action is to clear focus here.
-            clearFocusInternal(null, /* propagate */ true, /* refocus */ false);
-            clearParentsWantFocus();
-        } else if (!hasParentWantsFocus()) {
-            // original requestFocus was likely on this view directly, so just clear focus
-            clearFocusInternal(null, /* propagate */ true, /* refocus */ false);
-        }
-        // otherwise, we let parents handle re-assigning focus during their layout passes.
-    } else if ((mPrivateFlags & PFLAG_WANTS_FOCUS) != 0) {
-        mPrivateFlags &= ~PFLAG_WANTS_FOCUS;
-        View focused = findFocus();
-        if (focused != null) {
-            // Try to restore focus as close as possible to our starting focus.
-            if (!restoreDefaultFocus() && !hasParentWantsFocus()) {
-                // Give up and clear focus once we've reached the top-most parent which wants
-                // focus.
-                focused.clearFocusInternal(null, /* propagate */ true, /* refocus */ false);
-            }
-        }
-    }
-
-    if ((mPrivateFlags3 & PFLAG3_NOTIFY_AUTOFILL_ENTER_ON_LAYOUT) != 0) {
-        mPrivateFlags3 &= ~PFLAG3_NOTIFY_AUTOFILL_ENTER_ON_LAYOUT;
-        notifyEnterOrExitForAutoFillIfNeeded(true);
-    }
-}
-```
-
-## 绘制流程
-
-![绘制流程](../sources/view绘制/绘制流程.png)
-
-todo：硬件绘制sdk29版本分析
-
-ViewRoot.performDraw() 
-
-```java
-// 绘制流程入口
+// 绘制流程的入口
 private void performDraw() {
     if (mAttachInfo.mDisplayState == Display.STATE_OFF && !mReportNextDraw) {
         return;
@@ -1283,7 +1534,6 @@ private void performDraw() {
             final Handler handler = mAttachInfo.mHandler;
             mAttachInfo.mThreadedRenderer.setFrameCompleteCallback((long frameNr) ->
                     handler.postAtFrontOfQueue(() -> {
-                        // TODO: Use the frame number
                         pendingDrawFinished();
                         if (commitCallbacks != null) {
                             for (int i = 0; i < commitCallbacks.size(); i++) {
@@ -1362,9 +1612,10 @@ private void performDraw() {
 }
 ```
 
-ViewRoot.draw(fullRedrawNeeded)
+### draw(fullRedrawNeeded)
 
 ```java
+// fullRedrawNeeded：是否需要完整的绘制，ture则整个窗口设置为脏区,false只绘制脏区就可以了
 private boolean draw(boolean fullRedrawNeeded) {
     Surface surface = mSurface;
     if (!surface.isValid()) {
@@ -1415,7 +1666,6 @@ private boolean draw(boolean fullRedrawNeeded) {
 
     final Rect dirty = mDirty;
     if (mSurfaceHolder != null) {
-        // The app owns the surface, we won't draw.
         dirty.setEmpty();
         if (animating && mScroller != null) {
             mScroller.abortAnimation();
@@ -1536,23 +1786,12 @@ private boolean draw(boolean fullRedrawNeeded) {
 }
 ```
 
-###  软件绘制
-
-> 1、mSurface// WMS.addView()时创建
-
-> 2、Canvas canvas=mSurface.lockCanvas();// 获取一个以此surface为画布的canvas
-
-> 3、view.draw(canvas)；//使用canvas进行绘制
-
-> 4、Surface.unlockCanvasAndPost(canvas)//显示绘制的内容到屏幕
+### drawSoftware()
 
 
-
-图形库：Skia
-
-ViewRoot.drawSoftware()
 
 ```java
+// 软件绘制的入口
 private boolean drawSoftware(Surface surface, AttachInfo attachInfo, int xoff, int yoff,
         boolean scalingRequired, Rect dirty, Rect surfaceInsets) {
 
@@ -1574,7 +1813,7 @@ private boolean drawSoftware(Surface surface, AttachInfo attachInfo, int xoff, i
         final int top = dirty.top;
         final int right = dirty.right;
         final int bottom = dirty.bottom;
-				// 1、获取一个以此surfece为画布的canvas。参数为前面计算的脏区
+				// 1、获取一个以此surfece为画布的canvas。绘制区域为前面计算的脏区
         canvas = mSurface.lockCanvas(dirty);
         canvas.setDensity(mDensity);
     } catch (Surface.OutOfResourcesException e) {
@@ -1648,210 +1887,201 @@ private boolean drawSoftware(Surface surface, AttachInfo attachInfo, int xoff, i
 }
 ```
 
-View.draw()
+### scheduleTraversals()
 
 ```java
-public void draw(Canvas canvas) {
-    final int privateFlags = mPrivateFlags;
-    mPrivateFlags = (privateFlags & ~PFLAG_DIRTY_MASK) | PFLAG_DRAWN;
-    int saveCount;
-		// 绘制背景
-    drawBackground(canvas);
-    final int viewFlags = mViewFlags;
-    boolean horizontalEdges = (viewFlags & FADING_EDGE_HORIZONTAL) != 0;
-    boolean verticalEdges = (viewFlags & FADING_EDGE_VERTICAL) != 0;
-    if (!verticalEdges && !horizontalEdges) {
-        // 绘制控件自身内容
-        onDraw(canvas);
-        // 绘制子控件，如果当前控件不是viewGroup啥也不做
-        dispatchDraw(canvas);
-        drawAutofilledHighlight(canvas);
-
-        // Overlay is part of the content and draws beneath Foreground
-        if (mOverlay != null && !mOverlay.isEmpty()) {
-            mOverlay.getOverlayView().dispatchDraw(canvas);
+// 执行了会调用performTraversals()
+TraversalRunnable mTraversalRunnable
+void scheduleTraversals() {
+    if (!mTraversalScheduled) {
+        mTraversalScheduled = true;
+      	// 暂停了handler的后续消息处理，防止界面刷新的时候出现同步问题
+        mTraversalBarrier = mHandler.getLooper().getQueue().postSyncBarrier();
+        // 将runnable发送给handler执行
+      	mChoreographer.postCallback(
+                Choreographer.CALLBACK_TRAVERSAL, mTraversalRunnable, null);
+        if (!mUnbufferedInputDispatch) {
+            scheduleConsumeBatchedInput();
         }
-        // 绘制前景
-        onDrawForeground(canvas);
-        // 绘制焦点高光
-        drawDefaultFocusHighlight(canvas);
-        if (debugDraw()) {
-            debugDrawFocus(canvas);
-        }
-        return;
-    }
-
-    // 接下来是完整的绘制流程，包含上面的简易流程之外，还包含绘制渐变边界的工作
-    boolean drawTop = false;
-    boolean drawBottom = false;
-    boolean drawLeft = false;
-    boolean drawRight = false;
-
-    float topFadeStrength = 0.0f;
-    float bottomFadeStrength = 0.0f;
-    float leftFadeStrength = 0.0f;
-    float rightFadeStrength = 0.0f;
-
-    // Step 2, save the canvas' layers
-    int paddingLeft = mPaddingLeft;
-
-    final boolean offsetRequired = isPaddingOffsetRequired();
-    if (offsetRequired) {
-        paddingLeft += getLeftPaddingOffset();
-    }
-
-    int left = mScrollX + paddingLeft;
-    int right = left + mRight - mLeft - mPaddingRight - paddingLeft;
-    int top = mScrollY + getFadeTop(offsetRequired);
-    int bottom = top + getFadeHeight(offsetRequired);
-
-    if (offsetRequired) {
-        right += getRightPaddingOffset();
-        bottom += getBottomPaddingOffset();
-    }
-
-    final ScrollabilityCache scrollabilityCache = mScrollCache;
-    final float fadeHeight = scrollabilityCache.fadingEdgeLength;
-    int length = (int) fadeHeight;
-
-    // clip the fade length if top and bottom fades overlap
-    // overlapping fades produce odd-looking artifacts
-    if (verticalEdges && (top + length > bottom - length)) {
-        length = (bottom - top) / 2;
-    }
-
-    // also clip horizontal fades if necessary
-    if (horizontalEdges && (left + length > right - length)) {
-        length = (right - left) / 2;
-    }
-
-    if (verticalEdges) {
-        topFadeStrength = Math.max(0.0f, Math.min(1.0f, getTopFadingEdgeStrength()));
-        drawTop = topFadeStrength * fadeHeight > 1.0f;
-        bottomFadeStrength = Math.max(0.0f, Math.min(1.0f, getBottomFadingEdgeStrength()));
-        drawBottom = bottomFadeStrength * fadeHeight > 1.0f;
-    }
-
-    if (horizontalEdges) {
-        leftFadeStrength = Math.max(0.0f, Math.min(1.0f, getLeftFadingEdgeStrength()));
-        drawLeft = leftFadeStrength * fadeHeight > 1.0f;
-        rightFadeStrength = Math.max(0.0f, Math.min(1.0f, getRightFadingEdgeStrength()));
-        drawRight = rightFadeStrength * fadeHeight > 1.0f;
-    }
-
-    saveCount = canvas.getSaveCount();
-    int topSaveCount = -1;
-    int bottomSaveCount = -1;
-    int leftSaveCount = -1;
-    int rightSaveCount = -1;
-
-    int solidColor = getSolidColor();
-    if (solidColor == 0) {
-        if (drawTop) {
-            topSaveCount = canvas.saveUnclippedLayer(left, top, right, top + length);
-        }
-
-        if (drawBottom) {
-            bottomSaveCount = canvas.saveUnclippedLayer(left, bottom - length, right, bottom);
-        }
-
-        if (drawLeft) {
-            leftSaveCount = canvas.saveUnclippedLayer(left, top, left + length, bottom);
-        }
-
-        if (drawRight) {
-            rightSaveCount = canvas.saveUnclippedLayer(right - length, top, right, bottom);
-        }
-    } else {
-        scrollabilityCache.setFadeColor(solidColor);
-    }
-
-    // Step 3, draw the content
-    onDraw(canvas);
-
-    // Step 4, draw the children
-    dispatchDraw(canvas);
-
-    // Step 5, draw the fade effect and restore layers
-    final Paint p = scrollabilityCache.paint;
-    final Matrix matrix = scrollabilityCache.matrix;
-    final Shader fade = scrollabilityCache.shader;
-
-    // must be restored in the reverse order that they were saved
-    if (drawRight) {
-        matrix.setScale(1, fadeHeight * rightFadeStrength);
-        matrix.postRotate(90);
-        matrix.postTranslate(right, top);
-        fade.setLocalMatrix(matrix);
-        p.setShader(fade);
-        if (solidColor == 0) {
-            canvas.restoreUnclippedLayer(rightSaveCount, p);
-
-        } else {
-            canvas.drawRect(right - length, top, right, bottom, p);
-        }
-    }
-
-    if (drawLeft) {
-        matrix.setScale(1, fadeHeight * leftFadeStrength);
-        matrix.postRotate(-90);
-        matrix.postTranslate(left, top);
-        fade.setLocalMatrix(matrix);
-        p.setShader(fade);
-        if (solidColor == 0) {
-            canvas.restoreUnclippedLayer(leftSaveCount, p);
-        } else {
-            canvas.drawRect(left, top, left + length, bottom, p);
-        }
-    }
-
-    if (drawBottom) {
-        matrix.setScale(1, fadeHeight * bottomFadeStrength);
-        matrix.postRotate(180);
-        matrix.postTranslate(left, bottom);
-        fade.setLocalMatrix(matrix);
-        p.setShader(fade);
-        if (solidColor == 0) {
-            canvas.restoreUnclippedLayer(bottomSaveCount, p);
-        } else {
-            canvas.drawRect(left, bottom - length, right, bottom, p);
-        }
-    }
-
-    if (drawTop) {
-        matrix.setScale(1, fadeHeight * topFadeStrength);
-        matrix.postTranslate(left, top);
-        fade.setLocalMatrix(matrix);
-        p.setShader(fade);
-        if (solidColor == 0) {
-            canvas.restoreUnclippedLayer(topSaveCount, p);
-        } else {
-            canvas.drawRect(left, top, right, top + length, p);
-        }
-    }
-
-    canvas.restoreToCount(saveCount);
-
-    drawAutofilledHighlight(canvas);
-
-    // Overlay is part of the content and draws beneath Foreground
-    if (mOverlay != null && !mOverlay.isEmpty()) {
-        mOverlay.getOverlayView().dispatchDraw(canvas);
-    }
-
-    // Step 6, draw decorations (foreground, scrollbars)
-    onDrawForeground(canvas);
-
-    if (debugDraw()) {
-        debugDrawFocus(canvas);
+        notifyRendererOfFramePending();
+        pokeDrawLockIfNeeded();
     }
 }
 ```
-ViewGroup.dispatchDraw()
 
-确定子控件绘制的顺序
+## FrameLayout
+
+### onMeasure()
 
 ```java
+// 宽|高为MATCH_PARENT的子控件的集合
+private final ArrayList<View> mMatchParentChildren; 
+@Override
+protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+    int count = getChildCount();
+		// 是否需要考虑子控件MATCH_PARENT
+  	// false：本frameLaout的尺寸被父控件定死了，我的子控件MATCH_PARENT则与我一样大
+  	// true：本frameLaout的尺寸，父控件让我自己定
+    final boolean measureMatchParentChildren =
+            MeasureSpec.getMode(widthMeasureSpec) != MeasureSpec.EXACTLY ||
+            MeasureSpec.getMode(heightMeasureSpec) != MeasureSpec.EXACTLY;
+    mMatchParentChildren.clear();
+
+    int maxHeight = 0;// 本控件需要的高度，最高的子控件（高度+margin）+本控件的padding
+    int maxWidth = 0;
+  	// 会决定FrameLayout的状态位（高8位），每一个子控件的高8位做|或运算而来
+  	// 然而基本不会，MeasureSpec.getMode()结果一般永远为0
+  	// 猜测是用来判断MEASURED_STATE_TOO_SMALL的
+  	// 宽及高的状态位，低16位是高的SPEC_MOED右移16位而来
+  	// 1、即任意子控件宽及高的状态位中包含了MEASURED_STATE_TOO_SMALL标签，
+  	// 则childState相应标识位会为1，
+  	// 2、如有子控件的宽SPEC_MODE=AT_MOST，则其32位为1。
+  	//    那么可能会出现32&31位均为1的情况，然而并没有下面再分析
+    int childState = 0;
+
+    for (int i = 0; i < count; i++) {
+        final View child = getChildAt(i);
+        if (mMeasureAllChildren || child.getVisibility() != GONE) {
+          	// 子控件进行测量，考虑margin，最终调用child.measure()
+            measureChildWithMargins(child, widthMeasureSpec, 0, heightMeasureSpec, 0);
+            final LayoutParams lp = (LayoutParams) child.getLayoutParams();
+          	// 以最宽的子控件为宽度
+            maxWidth = Math.max(maxWidth,
+                    child.getMeasuredWidth() + lp.leftMargin + lp.rightMargin);
+          // 以最高的子控件为高度  
+          maxHeight = Math.max(maxHeight,
+                    child.getMeasuredHeight() + lp.topMargin + lp.bottomMargin);
+          // getMeasuredState()：获取控件的Spec_MODE，高16位是高度，低16位是宽度
+          // combineMeasuredStates()两个参数做|或运算
+          // 任意子控件有MEASURED_STATE_TOO_SMALL标识，则childState对应标识位一定为1
+          childState = combineMeasuredStates(childState,child.getMeasuredState());
+            if (measureMatchParentChildren) {
+              	// 本FrameLayout的父控件没有定死我的尺寸
+                if (lp.width == LayoutParams.MATCH_PARENT ||
+                        lp.height == LayoutParams.MATCH_PARENT) {
+                  	// 记录MATCH_PARENT的子控件，FrameLayout尺寸确定了，再处理他们
+                    mMatchParentChildren.add(child);
+                }
+            }
+        }
+    }
+
+    // 需要的宽高，需要+FrameLayout的padding
+    maxWidth += getPaddingLeftWithForeground() + getPaddingRightWithForeground();
+    maxHeight += getPaddingTopWithForeground() + getPaddingBottomWithForeground();
+
+    // 背景的drawable最小尺寸，需要>控件尺寸
+    maxHeight = Math.max(maxHeight, getSuggestedMinimumHeight());
+    maxWidth = Math.max(maxWidth, getSuggestedMinimumWidth());
+
+    // 前景的drawable最小尺寸，需要>控件尺寸
+    final Drawable drawable = getForeground();
+    if (drawable != null) {
+        maxHeight = Math.max(maxHeight, drawable.getMinimumHeight());
+        maxWidth = Math.max(maxWidth, drawable.getMinimumWidth());
+    }
+		// resolveSizeAndState()下面有，计算FrameLayout尺寸.
+  	// setMeasuredDimension保存计算出的尺寸。
+    setMeasuredDimension(resolveSizeAndState(maxWidth, widthMeasureSpec, childState),
+            resolveSizeAndState(maxHeight, heightMeasureSpec,
+                    childState << MEASURED_HEIGHT_STATE_SHIFT));
+		// 确定了自己尺寸，MATCH_PARENT的子控件，需要重新测量
+    count = mMatchParentChildren.size();
+    if (count > 1) {
+        for (int i = 0; i < count; i++) {
+            final View child = mMatchParentChildren.get(i);
+            final MarginLayoutParams lp = (MarginLayoutParams) child.getLayoutParams();
+						// 处理宽
+            final int childWidthMeasureSpec;
+            if (lp.width == LayoutParams.MATCH_PARENT) {
+                final int width = Math.max(0, getMeasuredWidth()
+                        - getPaddingLeftWithForeground() - getPaddingRightWithForeground()
+                        - lp.leftMargin - lp.rightMargin);
+                childWidthMeasureSpec = MeasureSpec.makeMeasureSpec(
+                        width, MeasureSpec.EXACTLY);
+            } else {
+         
+                childWidthMeasureSpec = getChildMeasureSpec(widthMeasureSpec,
+                        getPaddingLeftWithForeground() + getPaddingRightWithForeground() +
+                        lp.leftMargin + lp.rightMargin,
+                        lp.width);
+            }
+
+            final int childHeightMeasureSpec;
+          	// 处理高
+            if (lp.height == LayoutParams.MATCH_PARENT) {
+                final int height = Math.max(0, getMeasuredHeight()
+                        - getPaddingTopWithForeground() - getPaddingBottomWithForeground()
+                        - lp.topMargin - lp.bottomMargin);
+                childHeightMeasureSpec = MeasureSpec.makeMeasureSpec(
+                        height, MeasureSpec.EXACTLY);
+            } else {
+                childHeightMeasureSpec = getChildMeasureSpec(heightMeasureSpec,
+                        getPaddingTopWithForeground() + getPaddingBottomWithForeground() +
+                        lp.topMargin + lp.bottomMargin,
+                        lp.height);
+            }
+						// 子控件的MeasureSpec确定了，子控件去测量
+            child.measure(childWidthMeasureSpec, childHeightMeasureSpec);
+        }
+    }
+}
+```
+
+### resolveSizeAndState()
+
+```java
+/**
+ * 计算期望大小和状态的工具方法.
+ *
+ * @param size 本控件期望的大小.
+ * @param measureSpec 父控件给我的measureSpec限制.
+ * @param childMeasuredState 会决定控件SPEC_MODE，其所有子控件状态位或运算而来，measureSpecde的高8位.	
+ * 			
+ * @return 算出来的MeasureSpec
+ */
+public static int resolveSizeAndState(int size, int measureSpec, int childMeasuredState) {
+    final int specMode = MeasureSpec.getMode(measureSpec);// 高2位
+    final int specSize = MeasureSpec.getSize(measureSpec);// 低30位
+    final int result;// 返回的MeasureSpec
+    switch (specMode) {
+        case MeasureSpec.AT_MOST:// 32位是1，2<<30
+        		// 多大都行，但不能超过specSize。
+            if (specSize < size) {
+              	// 超过了specSize，则使用specSize，但是要添加标识
+              	// MEASURED_STATE_TOO_SMALL：表示限制的尺寸<控件期望的尺寸，第25位=1
+              	// 25～30位是状态位，在返回的MeasureSpec中，添加给的尺寸太小了标识
+              	// 即把第25位，置为1
+                result = specSize | MEASURED_STATE_TOO_SMALL;
+            } else {
+              	// 没超过使用size
+                result = size;
+            }
+            break;
+        case MeasureSpec.EXACTLY:// 31位是1,1<<30
+        		// 父控件制定了尺寸
+            result = specSize;
+            break;
+        case MeasureSpec.UNSPECIFIED://32&31位都是0,0<<30
+        // 父控件接受任意尺寸，eg:ScrollView
+        default:
+            result = size;
+    }
+  	// MEASURED_STATE_MASK：高8位都是1
+  	// result现在只有size数据，没有Space_mode，或运算给加上
+  	// 然而childMeasuredState一般都会为0，即MeasureSpec.getMode()结果一般为0
+    return result | (childMeasuredState & MEASURED_STATE_MASK);
+}
+```
+
+## ViewGroup
+
+### dispatchDraw()
+
+
+
+```java
+// 确定子控件绘制的顺序
 @Override
 protected void dispatchDraw(Canvas canvas) {
     boolean usingRenderNodeProperties = canvas.isRecordingFor(mRenderNode);
@@ -1995,111 +2225,269 @@ protected void dispatchDraw(Canvas canvas) {
 }
 ```
 
-### 硬件绘制
 
-![硬件绘制](../sources/view绘制/硬件绘制.png)
 
-**图形库**：openGL ES 2.0
+## View
 
-**输出目标**：Android的Surface封装成的EGLSurface
-
-**入口**：HardwareRenderer.draw(),抽象类，子类为[GLRenderer](https://android.googlesource.com/platform/frameworks/base/+/4c1d506d7bf803f4fb5f8146fe7f81c3488c3225/core/java/android/view/GLRenderer.java)，4.4之后可能是ThreadedRenderer
-
-**信息传递流程**：Canvas(Java API) —> OpenGL(C/C++ Lib) —> 驱动程序 —> GPU。
-
-- **DisplayList**
-
-  DisplayList是一个基本绘制元素，包含元素原始属性（位置、尺寸、角度、透明度等），对应Canvas的drawXxx()方法。
-
-- **RenderNode**
-
-  一个RenderNode包含若干个DisplayList，通常一个RenderNode对应一个View，包含View自身及其子View的所有DisplayList。
-
-- **HardwareCanvas**
-
-  canvas子类，提供了诸如drawDisplayList()、drawHardwareLayer()等硬件加速特有操作。同时将Canvas类中的操作重定向到硬件加速图形库中
-
-- **updateDisplayListIfDirty()**:去获得一张Canvas，用来记录绘制命令
+### layout()
 
 
 
 ```java
-@Override
-    void draw(View view, View.AttachInfo attachInfo, HardwareDrawCallbacks callbacks,
-            Rect dirty) {
-        if (canDraw()) {
-            if (!hasDirtyRegions()) {
-                dirty = null;
+public void layout(int l, int t, int r, int b) {
+  	// 当measure方法未被调用的时候，会在layout里面执行一次onMeasure方法
+    if ((mPrivateFlags3 & PFLAG3_MEASURE_NEEDED_BEFORE_LAYOUT) != 0) {
+        onMeasure(mOldWidthMeasureSpec, mOldHeightMeasureSpec);
+        mPrivateFlags3 &= ~PFLAG3_MEASURE_NEEDED_BEFORE_LAYOUT;
+    }
+		// 保存原始坐标
+    int oldL = mLeft;
+    int oldT = mTop;
+    int oldB = mBottom;
+    int oldR = mRight;
+		// setFrame(l, t, r, b)就是做mLeft=l,mTop=t。。。
+    boolean changed = isLayoutModeOptical(mParent) ?
+            setOpticalFrame(l, t, r, b) : setFrame(l, t, r, b);
+		// measure()时，mPrivateFlags添加了PFLAG_LAYOUT_REQUIRED
+		// 如此控件布局没有改变不会重布局，用此标记放行
+    if (changed || (mPrivateFlags & PFLAG_LAYOUT_REQUIRED) == PFLAG_LAYOUT_REQUIRED) {
+       // 如果这是一个ViewGroup，在onLayout()需要依次调用子控件layout()
+       onLayout(changed, l, t, r, b);
+        if (shouldDrawRoundScrollbar()) {
+            if(mRoundScrollbarRenderer == null) {
+                mRoundScrollbarRenderer = new RoundScrollbarRenderer(this);
             }
-            attachInfo.mIgnoreDirtyState = true;
-            attachInfo.mDrawingTime = SystemClock.uptimeMillis();
-            view.mPrivateFlags |= View.PFLAG_DRAWN;
-            // We are already on the correct thread
-            final int surfaceState = checkRenderContextUnsafe();
-            if (surfaceState != SURFACE_STATE_ERROR) {
-              	// 1、获取对应的HardwareCanavs
-                HardwareCanvas canvas = mCanvas;
-                if (mProfileEnabled) {
-                    mProfileLock.lock();
-                }
-                dirty = beginFrame(canvas, dirty, surfaceState);
-              	// 2、获取根控件的DisplayList
-                RenderNode displayList = buildDisplayList(view, canvas);
-                flushLayerChanges();
-                // buildDisplayList() calls into user code which can cause
-                // an eglMakeCurrent to happen with a different surface/context.
-                // We must therefore check again here.
-                if (checkRenderContextUnsafe() == SURFACE_STATE_ERROR) {
-                    return;
-                }
-                int saveCount = 0;
-                int status = RenderNode.STATUS_DONE;
-                long start = getSystemTime();
-                try {
-                    status = prepareFrame(dirty);
-                  	// 之后会进行坐标转换，先保存canvas状态
-                    saveCount = canvas.save();
-                  	// ViewRoot在绘制前惊醒一些必要操作，callbacks就是ViewRoot
-                    callbacks.onHardwarePreDraw(canvas);
-                    if (displayList != null) {
-                      	// 3、绘制根控件的DisplayList到给定的Canvas上
-                        status |= drawDisplayList(attachInfo, canvas, displayList, status);
-                    } else {
-                        // Shouldn't reach here
-                        view.draw(canvas);
-                    }
-                } catch (Exception e) {
-                    Log.e(LOG_TAG, "An error has occurred while drawing:", e);
-                } finally {
-                  	// 由ViewRoot进行绘制后的工作，绘制ResizeBuffer动画
-                    callbacks.onHardwarePostDraw(canvas);
-                  	// 恢复canvas到绘制前的状态
-                    canvas.restoreToCount(saveCount);
-                    view.mRecreateDisplayList = false;
-                    mDrawDelta = getSystemTime() - start;
-                    if (mDrawDelta > 0) {
-                        mFrameCount++;
-                        debugDirtyRegions(dirty, canvas);
-                        drawProfileData(attachInfo);
-                    }
-                }
-                onPostDraw();
-              	// 4、发布绘制内容，执行 sEgl.eglSwapBuffers(sEglDisplay, mEglSurface);
-                swapBuffers(status);
-                if (mProfileEnabled) {
-                    mProfileLock.unlock();
-                }
-                attachInfo.mIgnoreDirtyState = false;
+        } else {
+            mRoundScrollbarRenderer = null;
+        }
+				// 清除PFLAG_LAYOUT_REQUIRED标记
+        mPrivateFlags &= ~PFLAG_LAYOUT_REQUIRED;
+				// 通知OnLayoutChangeListener观察者
+        ListenerInfo li = mListenerInfo;
+        if (li != null && li.mOnLayoutChangeListeners != null) {
+            ArrayList<OnLayoutChangeListener> listenersCopy =
+                    (ArrayList<OnLayoutChangeListener>)li.mOnLayoutChangeListeners.clone();
+            int numListeners = listenersCopy.size();
+            for (int i = 0; i < numListeners; ++i) {
+                listenersCopy.get(i).onLayoutChange(this, l, t, r, b, oldL, oldT, oldR, oldB);
             }
         }
     }
+
+    final boolean wasLayoutValid = isLayoutValid();
+  	// 重置PFLAG_FORCE_LAYOUT标志位为0，表示不强制layout
+    mPrivateFlags &= ~PFLAG_FORCE_LAYOUT;
+  	// 设置标志位，表示至少执行过一次layout
+    mPrivateFlags3 |= PFLAG3_IS_LAID_OUT;
+    。。。略
+}
 ```
 
 
 
-### 坐标系转换
+### draw()
 
-View.draw(ViewGroup,Canvas,long )
+```java
+public void draw(Canvas canvas) {
+    final int privateFlags = mPrivateFlags;
+    mPrivateFlags = (privateFlags & ~PFLAG_DIRTY_MASK) | PFLAG_DRAWN;
+    int saveCount;
+		// Step 1, 绘制控件背景
+    drawBackground(canvas);
+    final int viewFlags = mViewFlags;
+    boolean horizontalEdges = (viewFlags & FADING_EDGE_HORIZONTAL) != 0;
+    boolean verticalEdges = (viewFlags & FADING_EDGE_VERTICAL) != 0;
+    if (!verticalEdges && !horizontalEdges) {
+        // 绘制控件自身内容
+        onDraw(canvas);
+        // 绘制子控件，如果当前控件不是viewGroup啥也不做
+        dispatchDraw(canvas);
+        drawAutofilledHighlight(canvas);
+
+        // Overlay is part of the content and draws beneath Foreground
+        if (mOverlay != null && !mOverlay.isEmpty()) {
+            mOverlay.getOverlayView().dispatchDraw(canvas);
+        }
+        // 绘制前景
+        onDrawForeground(canvas);
+        // 绘制焦点高光
+        drawDefaultFocusHighlight(canvas);
+        if (debugDraw()) {
+            debugDrawFocus(canvas);
+        }
+        return;
+    }
+
+    // 接下来是完整的绘制流程，包含上面的简易流程之外，还包含绘制渐变边界的工作
+    boolean drawTop = false;
+    boolean drawBottom = false;
+    boolean drawLeft = false;
+    boolean drawRight = false;
+
+    float topFadeStrength = 0.0f;
+    float bottomFadeStrength = 0.0f;
+    float leftFadeStrength = 0.0f;
+    float rightFadeStrength = 0.0f;
+
+    // Step 2, save the canvas' layers
+    int paddingLeft = mPaddingLeft;
+
+    final boolean offsetRequired = isPaddingOffsetRequired();
+    if (offsetRequired) {
+        paddingLeft += getLeftPaddingOffset();
+    }
+
+    int left = mScrollX + paddingLeft;
+    int right = left + mRight - mLeft - mPaddingRight - paddingLeft;
+    int top = mScrollY + getFadeTop(offsetRequired);
+    int bottom = top + getFadeHeight(offsetRequired);
+
+    if (offsetRequired) {
+        right += getRightPaddingOffset();
+        bottom += getBottomPaddingOffset();
+    }
+
+    final ScrollabilityCache scrollabilityCache = mScrollCache;
+    final float fadeHeight = scrollabilityCache.fadingEdgeLength;
+    int length = (int) fadeHeight;
+
+    // clip the fade length if top and bottom fades overlap
+    // overlapping fades produce odd-looking artifacts
+    if (verticalEdges && (top + length > bottom - length)) {
+        length = (bottom - top) / 2;
+    }
+
+    // also clip horizontal fades if necessary
+    if (horizontalEdges && (left + length > right - length)) {
+        length = (right - left) / 2;
+    }
+
+    if (verticalEdges) {
+        topFadeStrength = Math.max(0.0f, Math.min(1.0f, getTopFadingEdgeStrength()));
+        drawTop = topFadeStrength * fadeHeight > 1.0f;
+        bottomFadeStrength = Math.max(0.0f, Math.min(1.0f, getBottomFadingEdgeStrength()));
+        drawBottom = bottomFadeStrength * fadeHeight > 1.0f;
+    }
+
+    if (horizontalEdges) {
+        leftFadeStrength = Math.max(0.0f, Math.min(1.0f, getLeftFadingEdgeStrength()));
+        drawLeft = leftFadeStrength * fadeHeight > 1.0f;
+        rightFadeStrength = Math.max(0.0f, Math.min(1.0f, getRightFadingEdgeStrength()));
+        drawRight = rightFadeStrength * fadeHeight > 1.0f;
+    }
+		// 获取栈中保存的状态信息的个数，计算方式等于save()的次数减去restore的次数。
+    saveCount = canvas.getSaveCount();
+    int topSaveCount = -1;
+    int bottomSaveCount = -1;
+    int leftSaveCount = -1;
+    int rightSaveCount = -1;
+
+    int solidColor = getSolidColor();
+    if (solidColor == 0) {
+        if (drawTop) {
+            topSaveCount = canvas.saveUnclippedLayer(left, top, right, top + length);
+        }
+
+        if (drawBottom) {
+            bottomSaveCount = canvas.saveUnclippedLayer(left, bottom - length, right, bottom);
+        }
+
+        if (drawLeft) {
+            leftSaveCount = canvas.saveUnclippedLayer(left, top, left + length, bottom);
+        }
+
+        if (drawRight) {
+            rightSaveCount = canvas.saveUnclippedLayer(right - length, top, right, bottom);
+        }
+    } else {
+        scrollabilityCache.setFadeColor(solidColor);
+    }
+
+    // Step 3, draw the content
+    onDraw(canvas);
+
+    // Step 4, draw the children
+    dispatchDraw(canvas);
+
+    // Step 5, draw the fade effect and restore layers
+    final Paint p = scrollabilityCache.paint;
+    final Matrix matrix = scrollabilityCache.matrix;
+    final Shader fade = scrollabilityCache.shader;
+
+    // must be restored in the reverse order that they were saved
+    if (drawRight) {
+        matrix.setScale(1, fadeHeight * rightFadeStrength);
+        matrix.postRotate(90);
+        matrix.postTranslate(right, top);
+        fade.setLocalMatrix(matrix);
+        p.setShader(fade);
+        if (solidColor == 0) {
+            canvas.restoreUnclippedLayer(rightSaveCount, p);
+
+        } else {
+            canvas.drawRect(right - length, top, right, bottom, p);
+        }
+    }
+
+    if (drawLeft) {
+        matrix.setScale(1, fadeHeight * leftFadeStrength);
+        matrix.postRotate(-90);
+        matrix.postTranslate(left, top);
+        fade.setLocalMatrix(matrix);
+        p.setShader(fade);
+        if (solidColor == 0) {
+            canvas.restoreUnclippedLayer(leftSaveCount, p);
+        } else {
+            canvas.drawRect(left, top, left + length, bottom, p);
+        }
+    }
+
+    if (drawBottom) {
+        matrix.setScale(1, fadeHeight * bottomFadeStrength);
+        matrix.postRotate(180);
+        matrix.postTranslate(left, bottom);
+        fade.setLocalMatrix(matrix);
+        p.setShader(fade);
+        if (solidColor == 0) {
+            canvas.restoreUnclippedLayer(bottomSaveCount, p);
+        } else {
+            canvas.drawRect(left, bottom - length, right, bottom, p);
+        }
+    }
+
+    if (drawTop) {
+        matrix.setScale(1, fadeHeight * topFadeStrength);
+        matrix.postTranslate(left, top);
+        fade.setLocalMatrix(matrix);
+        p.setShader(fade);
+        if (solidColor == 0) {
+            canvas.restoreUnclippedLayer(topSaveCount, p);
+        } else {
+            canvas.drawRect(left, top, right, top + length, p);
+        }
+    }
+
+    canvas.restoreToCount(saveCount);
+
+    drawAutofilledHighlight(canvas);
+
+    // Overlay is part of the content and draws beneath Foreground
+    if (mOverlay != null && !mOverlay.isEmpty()) {
+        mOverlay.getOverlayView().dispatchDraw(canvas);
+    }
+
+    // Step 6, draw decorations (foreground, scrollbars)
+    onDrawForeground(canvas);
+
+    if (debugDraw()) {
+        debugDrawFocus(canvas);
+    }
+}
+```
+
+### draw(ViewGroup,Canvas,long )
+
+
 
 ```java
 // 坐标系转换,还包含硬件加速，绘图缓存、动画计算等
@@ -2403,24 +2791,91 @@ boolean draw(Canvas canvas, ViewGroup parent, long drawingTime) {
 
 
 
+## HardwareRenderer.draw()
 
+tip：这个方法过时了，现在版本早就改了
 
-### 绘图缓存
-
-ListView在滑动时，每个Item的内容不会发生改变。保存item的快照使用，则不需要对item进行绘制。
-
-软件绘制：在View类中```Bitmap mDrawingCache;```保存了快照。
-
-硬件绘制：todo
-
+```java
+@Override
+    void draw(View view, View.AttachInfo attachInfo, HardwareDrawCallbacks callbacks,
+            Rect dirty) {
+        if (canDraw()) {
+            if (!hasDirtyRegions()) {
+                dirty = null;
+            }
+            attachInfo.mIgnoreDirtyState = true;
+            attachInfo.mDrawingTime = SystemClock.uptimeMillis();
+            view.mPrivateFlags |= View.PFLAG_DRAWN;
+            // We are already on the correct thread
+            final int surfaceState = checkRenderContextUnsafe();
+            if (surfaceState != SURFACE_STATE_ERROR) {
+              	// 1、获取对应的HardwareCanavs
+                HardwareCanvas canvas = mCanvas;
+                if (mProfileEnabled) {
+                    mProfileLock.lock();
+                }
+                dirty = beginFrame(canvas, dirty, surfaceState);
+              	// 2、获取根控件的DisplayList
+                RenderNode displayList = buildDisplayList(view, canvas);
+                flushLayerChanges();
+                // buildDisplayList() calls into user code which can cause
+                // an eglMakeCurrent to happen with a different surface/context.
+                // We must therefore check again here.
+                if (checkRenderContextUnsafe() == SURFACE_STATE_ERROR) {
+                    return;
+                }
+                int saveCount = 0;
+                int status = RenderNode.STATUS_DONE;
+                long start = getSystemTime();
+                try {
+                    status = prepareFrame(dirty);
+                  	// 之后会进行坐标转换，先保存canvas状态
+                    saveCount = canvas.save();
+                  	// ViewRoot在绘制前惊醒一些必要操作，callbacks就是ViewRoot
+                    callbacks.onHardwarePreDraw(canvas);
+                    if (displayList != null) {
+                      	// 3、绘制根控件的DisplayList到给定的Canvas上
+                        status |= drawDisplayList(attachInfo, canvas, displayList, status);
+                    } else {
+                        // Shouldn't reach here
+                        view.draw(canvas);
+                    }
+                } catch (Exception e) {
+                    Log.e(LOG_TAG, "An error has occurred while drawing:", e);
+                } finally {
+                  	// 由ViewRoot进行绘制后的工作，绘制ResizeBuffer动画
+                    callbacks.onHardwarePostDraw(canvas);
+                  	// 恢复canvas到绘制前的状态
+                    canvas.restoreToCount(saveCount);
+                    view.mRecreateDisplayList = false;
+                    mDrawDelta = getSystemTime() - start;
+                    if (mDrawDelta > 0) {
+                        mFrameCount++;
+                        debugDirtyRegions(dirty, canvas);
+                        drawProfileData(attachInfo);
+                    }
+                }
+                onPostDraw();
+              	// 4、发布绘制内容，执行 sEgl.eglSwapBuffers(sEglDisplay, mEglSurface);
+                swapBuffers(status);
+                if (mProfileEnabled) {
+                    mProfileLock.unlock();
+                }
+                attachInfo.mIgnoreDirtyState = false;
+            }
+        }
+    }
 ```
-// 关闭绘制缓存
-view.setLayerType(View.LAYER_TYPE_NONE,null);
-// 开启绘制缓存，使用软件绘制
-view.setLayerType(View.LAYER_TYPE_SOFTWARE,null);
-// 开启绘制缓存，使用硬件绘制。如未开启硬件加速，则使用软件绘制
-view.setLayerType(View.LAYER_TYPE_HARDWARE,null);
-```
 
 
+
+##todo
+
+View.post(runnable) View.post原理 HandlerActionQueue
+
+下次执行performTraversal()，进入预测量流程之前执行
+
+view的flags
+
+软键盘的模式
 
