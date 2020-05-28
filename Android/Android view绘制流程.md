@@ -297,9 +297,13 @@ Choreographer mChoreographer;
 void scheduleTraversals() {
     if (!mTraversalScheduled) {
         mTraversalScheduled = true;
+      	// 开启内存屏障，只让异步消息通过。目的是让异步消息先执行，
+       	// Android 系统中的 UI 更新相关的消息即为异步消息，需要优先处理。
         mTraversalBarrier = mHandler.getLooper().getQueue().postSyncBarrier();
       	// runnbale会添加到编舞者的CallbackQueue[] mCallbackQueues;成员变量中
+      	// 编舞者发送异步消息，使用的也是主线程的looper，即一个handler（不肯定）
         mChoreographer.postCallback(
+          			// 当编舞者收到Vsync信号，会触发设置的Callback，runnable得到执行
                 Choreographer.CALLBACK_TRAVERSAL, mTraversalRunnable, null);
         if (!mUnbufferedInputDispatch) {
             scheduleConsumeBatchedInput();
@@ -316,6 +320,7 @@ void scheduleTraversals() {
 void doTraversal() {
     if (mTraversalScheduled) {
         mTraversalScheduled = false;
+      	// 移除同步屏障
         mHandler.getLooper().getQueue().removeSyncBarrier(mTraversalBarrier);
         if (mProfile) {
             Debug.startMethodTracing("ViewAncestor");
