@@ -1,9 +1,5 @@
 [TOC]
 
-
-
-# 1、Android
-
 Activity 启动模式 生命周期
 
 view动画、属性动画
@@ -213,5 +209,152 @@ MVC，MVP，MVVM差别
 
 给定一个数组，其中的数据要么出现1次，要么出现2次，查找只出现一次的数据元素：异或的运用 （逻辑思维）
 
+## Android 中多线程的常见实现方式
+
+1、继承Thread，复写run()
+
+2、实现Runnable/Callable接口，通过Thread、线程池执行 
+
+3、HandlerThread、IntentService、AsyncTask、RxJava
+
+## handler 内存泄漏原因
+
+匿名内部类持有外部类引用，Handler生命周期可能比activity长
+
+静态内部类+弱引用
+
+##  OOM及内存引用类型
+
+1、通过new创建对象，系统分配内存，内存不足，GC回收弱引用和虚引用
+
+2、还不足，内存扩容。还不足，GC回收软引用
+
+3、还是分配不了，强引用也不回收。抛OOM异常，也就是内存溢出a
+
+![内存分配过程](sources/内存分配过程.png)
 
 
+
+| 引用类型 | 被垃圾回收时机        | 用途               | 英文             |
+| -------- | --------------------- | ------------------ | ---------------- |
+| 强引用   | GC Root到此对象不可达 | 对象的一般状态     | StrongReference  |
+| 软引用   | 当内存不足时          | 对象缓存           | StrongReference  |
+| 弱引用   | 正常垃圾回收时        | 对象缓存           | WeakReference    |
+| 虚引用   | 正常垃圾回收时        | 跟踪对象的垃圾回收 | PhantomReference |
+
+
+
+- 虚引用（PhantomReference）
+
+主要用来跟踪对象被垃圾回收器回收的活动。
+
+虚引用与软引用和弱引用的一个区别在于：虚引用必须和引用队列 （ReferenceQueue）联合使用。当垃圾回收器准备回收一个对象时，如果发现它还有虚引用，就会在回收对象的内存之前，把这个虚引用加入到与之 关联的引用队列中。
+示例：
+
+```java
+ReferenceQueue<String[]> referenceQueue = new ReferenceQueue<String[]>();
+PhantomReference<String[]> referent = new PhantomReference<String>(new String[]{"a", "b", "c"}, referenceQueue);
+```
+
+
+
+## 内存优化
+
+
+
+
+
+## 包体积优化
+
+
+
+## 类加载过程，什么是双亲委派模型？VerifyError 什么时候出现？ 基本了解
+
+## Android 存储熟悉
+
+## 进程间通信
+
+binder
+
+socket
+
+信号量
+
+。。。
+
+
+
+## 动画实现
+答的不错，贝塞尔曲线实现
+
+
+
+## https原理 重定向 常见错误码
+
+Cookie
+比较浅
+Session
+比较浅
+
+
+
+## list map set底层区别及 扩容原理
+
+## RN 原理
+
+
+
+## 常见设计模式
+
+## 五层模型
+
+## 接口和抽象类有什么区别
+
+##  hashmap原理
+
+##  线程安全  线程池 Thread
+
+# 算法
+
+给定一个整数数组 nums 和一个目标值 target，请你在该数组中找出和为目标值的 两个 整数。
+
+
+
+```java
+// 遍历法O(N2) 
+public int[] twoSum(int[] nums,int target){
+  for(int i = 0; i < nums.length; i++){
+    for(int j = 1; j < nums.length; j++){
+      if(nums[i] == target - nums[j]){
+        return new int[]{nums[i],nums[j]};
+      }
+    }
+  }
+  return null;
+}
+
+
+// 一遍哈希表 空间换时间
+public int[] twoSum(int[] nums,int target){
+  Map<Integer,Integer> map = new HashMap<>();
+  for(int i = 0;i < nums.length; i++){
+    map.put(nums[i],i);
+    int complement = target - nums[i];
+    if(map.containKey(complement)){
+      return new int[]{complement,nums[i]};
+    }
+  }
+}
+```
+
+ 快速排序算法， 写出来了，细节问题随时提，能优化。
+
+
+
+开灯算法
+
+字符串替换空格
+
+10.排序算法；通过互换0与n的位置实现排序
+
+二叉树的层序遍历
