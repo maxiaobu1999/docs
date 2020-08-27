@@ -1,55 +1,122 @@
 [TOC]
 
-Activity 启动模式 生命周期
-
-view动画、属性动画
-
-buildToolsVersion：使用什么版本的API
-
-TargetSDKVersion：兼容模式，运行时权限
 
 
+### 事件分发
 
-diskLruCache如何设计一个缓存系统：建一个文件夹，将下载的数据存在文件夹下，使用LRU规则，当文件夹满时进行删除，使用文件本身的属性进行唯一标示
+三个方法，事件流，多点触控，点击冲突。
+
+主要讲下viewGroupdispatchTouchEvent()
+
+控件是以树形结构保存的，根结点DocorView
+
+事件的传递：遍历控件树执行dispatchTouchEvent()
+
+1、检查事件类型action_down 根据触控点的坐标和dispatchTouchEvent的返回值确定派发目标，就是常说的事件的消费者
+
+2、这时候根结点与派发目标形成了双向链表，后续的事件就在这个链表里传递，不需要再找派发目标了。
+
+3、最后，检查事件类型是action_up,就清除派发目标
+
+从第一根手指落下到最后一根手指抬起，为一个事件流。所以down不消费，事件流的后续事件无法接收
+
+onTouchEvent()
+
+寻找派发目标的事件时，会调用这个方法，根据返回值确定派发目标。调用顺序，是从控件树的叶子结点到根结点。所有子控件都不消费事件，docorView会触发activity的回调，然后消费这个事件
+
+InterceptTouchEvent（）作用是拦截时间，传递事件时会执行这个方法，根据返回值决定是自己消费，还是向传递。requestParentIntercpter()类似。
+
+### 消息机制
+
+知道messageQueue，looper，handler的关系，delayed的消息怎么实现的：队列排序
 
 
 
-消息机制：知道messageQueue，looper，handler的关系，delayed的消息怎么实现的：线程中sleep进行等待
 
-毛建国
 
-ctivity相关问题，四种启动模式，生命周期
+### 启动模式
 
-standard 标准启动模式（自己启动自己会按三次才能退出） singleTop 单一顶部模式
+standard 标准启动模式
 
-- 如果任务栈的栈顶存在这个要开启的activity，不会重新的创建activity，而是复用已经存在的activity。如果栈顶没有或者不在栈顶，会重新创建
-- 会调用 onNewInstance()，复用已经存在的实例
+ singleTop 单一顶部模式
+
+- 栈顶复用， onNewIntent()
 - 应用场景：singleTop适合接收通知启动的内容显示页面。例如，某个新闻客户端的新闻内容页面，如果收到10个新闻推送，每次都打开一个新闻内容页面是很耗内存的。
 
 singeTask 单一任务栈，在当前任务栈里面只能有一个实例存在
 
-- 当开启activity的时候，就去检查在任务栈里面是否有实例已经存在，如果有实例存在就复用这个已经存在的activity，并且把这个activity上面的所有的别的activity都清空，复用这个已经存在的activity。保证整个任务栈里面只有一个实例存在
-- 会调用 onNewInstance()，复用已经存在的实例
-- 应用场景：
+- 栈内复用，顶部弹栈，onNewIntent()
+- 应用场景：singleTask适合作为程序入口点，例如应用中的主页（Home页）。假设用户在主页跳转到其他页面，运行多次操作后想返回到主页，假设不使用SingleTask模式，在点击返回的过程中会多次看到主页，这明显就是设计不合理了。 singleInstance：activity会运行在自己的任务栈里面，并且这个任务栈里面只有一个实例存在
 
-singleTask适合作为程序入口点，例如应用中的主页（Home页）。假设用户在主页跳转到其他页面，运行多次操作后想返回到主页，假设不使用SingleTask模式，在点击返回的过程中会多次看到主页，这明显就是设计不合理了。 singleInstance：activity会运行在自己的任务栈里面，并且这个任务栈里面只有一个实例存在
+singleInstance
 
-- 如果你要保证一个activity在整个手机操作系统里面只有一个实例存在，使用singleInstance
-- 应用场景： 电话拨打界面
-
-singleInstance适合需要与程序分离开的页面。例如我们有个需求，需要打开别的应用，这个时候如果不设置singleInstance的话，这个新打开的应用在我们程序的任务栈里，用户想要按任务键切换的话没法切换。
-
-
+适合需要与程序分离开的页面。例如我们有个需求，需要打开别的应用，这个时候如果不设置singleInstance的话，这个新打开的应用在我们程序的任务栈里，用户想要按任务键切换的话没法切换。
 
 activity给fragment传递数据一般不通过fragment的构造方法来传递，会通过setArguments来传递，因为当横竖屏会调用fragment的空参构造函数，数据丢失。
 
+A启动B
 
+a.pause>b.create>b.start>b.resume>a.stop
+
+B返回A
+
+b.pause > a.restart > a.start > a.resume > b.stop > b.destory 
+
+横竖切换
+
+10ROM1次生命周期，不走onRestart，走onSaveInstanceState(2)；（低版本横切竖，两次生命周期？）
+
+manifest配置configChange，只走onConfigurationChanged（）
+
+# java 类加载
+
+final常量 > 静态（变量，初始化语句，代码块）> （非变量（变量，初始化语句，代码块）> 构造）> 方法
+
+父类 > 子类（同级，除方法）
+
+# 重载与重写
+
+重载：函数名字相同，根据参数确定哪个方法
+
+重写（Overriding）：也叫覆盖，子类重写父类方法，根据对象的类型确定哪个方法。super调父类方法，修饰权限需大于父类,private和static不能重写。
+
+
+
+#  HashCode
+
+object：equal内存地址 ,hashcode()内存地址转成整数型,
+
+hashMap：hash(){(key == null) ? 0 : (h = key.hashCode()) ^ (h >>> 16);}
+
+# react native
+
+js引擎 解释器 虚拟机
+
+jsx > 编译后js脚本
+
+dom渲染：HTML生成dom树，css生成css rule tree规则树。遇到js渲染阻塞，js引擎操作这两种树。合成render tree。
+
+然后计算视口ViewPoint（测量布局），由系统api渲染（绘制）。回流（requestLayout()）。重绘（invalidate()）
+
+React : 画UI只需要画到virtual DOM 中，不需要特别关心具体的平台,Virtual DOM适配实现到各个平台，实现跨平台的能力
+
+生命周期 自定义控件
+
+# list set map区别
+
+实习的接口不同：collection（list、map）；map就map
+
+list有序
+
+set 去重
+
+map键值对
 
 view动画、属性动画
 
 
 
-Gradle中buildToolsVersion和TargetSdkVersion的区别是什么
+Gradual中buildToolsVersion和TargetSdkVersion的区别是什么
 
 compileSdkVersion, minSdkVersion 和 targetSdkVersion 的作用：他们分别控制可以使用哪些 API ，要求的 API 级别是什么，以及应用的兼容模式。TargetSdkVersion 设为23那么是按6.0设置的（运行时权限），小于23是按6.0以前的方式（安装时默认获得权限，且用户无法在安装App之后取消权限）
 
@@ -280,7 +347,7 @@ socket
 
 信号量
 
-。。。
+管道
 
 
 
@@ -358,3 +425,45 @@ public int[] twoSum(int[] nums,int target){
 10.排序算法；通过互换0与n的位置实现排序
 
 二叉树的层序遍历
+
+
+
+
+
+多线程通讯
+
+SharePerefance 多线程 多进程
+
+replugin原理
+
+webview 复用
+
+多进程通信
+
+内存泄漏
+
+
+
+
+
+
+
+多路复用 败者树
+
+# Android WiFi直连 双向通信
+
+
+
+
+
+### diskLruCache
+
+建一个文件夹，将下载的数据存在文件夹下，使用LRU规则，当文件夹满时进行删除，使用文件本身的属性进行唯一标示
+
+Activity 启动模式 生命周期
+
+view动画、属性动画
+
+buildToolsVersion：使用什么版本的API
+
+TargetSDKVersion：兼容模式，运行时权限

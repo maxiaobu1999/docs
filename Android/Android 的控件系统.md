@@ -1,6 +1,6 @@
 # Android 的控件系统
 
-
+dispatchTouchEvent()
 
 > dispatchTouchEvent（）、 onInterceptTouchEvent() 、onTouchEvnt()
 >
