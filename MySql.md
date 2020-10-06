@@ -178,3 +178,11 @@ source norman.sql
 ## 3、使用 Navicat 来进行数据库之间的迁移
 
 https://blog.csdn.net/xuanjiewu/article/details/86152633
+
+
+
+
+
+(No operations allowed after connection closed.)
+
+# https://blog.csdn.net/itguangit/article/details/79178155

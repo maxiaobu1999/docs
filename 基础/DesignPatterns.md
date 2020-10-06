@@ -8,7 +8,7 @@
 
 ```java
 class Singleton{
-  private static volatile Singleton sInstance;
+  private static volatile Singleton sInstance;// 保证写会内存
   private Singleton(){}
 	public Singleton getInstance(){
     if(sInstance == null){
@@ -18,6 +18,7 @@ class Singleton{
         }
       }
     }
+    return sInstance;
   }
 }		
 		
@@ -79,12 +80,18 @@ class Client{
 
 # 3.3 工厂方法
 
-定义一个创建对象的接口，让子类决定实例化哪个对象，将一个类的实例化延迟到子类。
+定义一个创建对象的接口，让子类决定实例化哪个类，使一个类的实例化延迟到其子类。
 
 ```java
-abstract class Product{}
-class ProductA{}
-class ProductB{}
+abstract class Product{
+  abstract void use();
+}
+class ProductA{
+  void use(){}
+}
+class ProductB{
+  void use(){}
+}
 abstract interface Factory{
   Product createProduct();
 }
@@ -97,6 +104,12 @@ class FactoryB implements Factory{
   public Product createProduct(){
     return new PaoductB();
   }
+}
+
+Class Client{
+  Factory factory = new FactoryA();
+  Product product = factory.createProduct();
+  product.use();
 }
 ```
 
@@ -120,7 +133,7 @@ class Subject{
     mObserver.remove(observer);
   }
   
-  void update(){
+  void notify(){
     for(Observer observer : mObservers){
       observer.update();
     }
@@ -147,8 +160,9 @@ class ConcreteObserver{
 把多个对象连成一条链，并沿这条链传递请求，直到有对象处理他为止。使多个对象都有机会处理请求，解耦请求的发送者与接收者。
 
 ```java
+class Reuqest{};
 abstract class Handler{
-  Handler next;
+  public Handler next;
   abstract void handleRequest(String request);
 }
 
@@ -160,7 +174,32 @@ class ConcreteHandler extends Handler{
     // ... 
   }
 }
+
+class Client{
+  Handler handler = new ConcreteHandler();
+  // handler.next = new ConcreteHandler2();
+  handler.handleRequest(...);
+}
 ```
 
 
 
+# 代理
+
+为其他对象提供一个代理，以控制这个对象访问
+
+1、远程代理
+
+​	为不在同一空间的对象提供，一个本地代理。binder
+
+2、虚代理
+
+​	延迟被代理对象的初始化，ContentProdiver
+
+3、保护代理
+
+4、智能指引
+
+# 装饰DECORATOR
+
+动态地给一个对象添加一些额外的指责，比生成子类更灵活；

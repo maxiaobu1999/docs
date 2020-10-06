@@ -43,7 +43,7 @@ threadLocal1.get();// 结果2
 // 在其他线程中执行，threadLocal1.get();// 结果为null
 ```
 
-Thread对象 里 map《threadLocal的hash值，值》
+Thread对象 里 map<threadLocal的hash值，值>
 
 map里数组 数组 角标hash与运算，存值，扩容
 
